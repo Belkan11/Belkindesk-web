@@ -1,0 +1,27 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User profile, notes, timers, schedules, feeds, and personal workspace data
+    // Fully persistent across all deployments and server restarts
+    match /users/{userId} {
+      allow read, write: if true;
+      
+      // Subcollections or nested user data
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // System configurations, curated feed registries, and app state
+    match /system/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Backup snapshots
+    match /backups/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
+

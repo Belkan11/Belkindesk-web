@@ -1,0 +1,21 @@
+{
+  "entities": {
+    "users": {
+      "title": "UserProfile",
+      "description": "Personal account and workspace data for each user/doctor",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" }
+      },
+      "required": ["id", "email", "displayName"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "users" },
+      "description": "User profile collection"
+    }
+  }
+}
