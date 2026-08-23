@@ -1,7 +1,7 @@
 import { 
   UserProfile, 
   UserWorkspaceConfig, 
-  FeedSource, 
+  FeedConfig, 
   Article, 
   DesktopBookmark, 
   CalendarEvent, 
@@ -38,7 +38,7 @@ export const DEFAULT_WORKSPACE_CONFIG: UserWorkspaceConfig = {
   filterSavedOnly: false,
   activeCategory: 'all',
   activeFeedId: null,
-  searchQuery: '',
+  searchQuery: "",
   selectedArticleId: 'art-acc-edu',
   keywordMutes: [],
   keywordHighlights: ['ACC', 'ESC', 'РКО', 'Инфаркт', 'ХСН', 'ЭхоКГ'],
@@ -114,8 +114,7 @@ export const INITIAL_BOOKMARKS: DesktopBookmark[] = [
   {
     id: 'bm-run',
     title: 'run.exe',
-    url: 'C:\\Windows\\System32\\cmd.exe',
-    type: 'file',
+    url: "run",
     category: 'Система',
     isPinned: true,
     description: 'Исполняемый файл или консоль Windows',
@@ -123,8 +122,7 @@ export const INITIAL_BOOKMARKS: DesktopBookmark[] = [
   {
     id: 'bm-d',
     title: 'D:\\',
-    url: 'D:\\Медицинский архив',
-    type: 'folder',
+    url: "D:\\",
     category: 'Система',
     isPinned: true,
     description: 'Папка в проводнике Windows',
@@ -132,8 +130,7 @@ export const INITIAL_BOOKMARKS: DesktopBookmark[] = [
   {
     id: 'bm-http',
     title: 'http:\\\\',
-    url: 'https://scardio.ru',
-    type: 'link',
+    url: "http:\\\\",
     category: 'Система',
     isPinned: true,
     description: 'Веб-портал и клинические рекомендации',
@@ -145,27 +142,27 @@ export function getInitialCalendarEvents(): CalendarEvent[] {
     {
       id: 'ev-1',
       title: 'Утренний клинический обход',
+      type: 'task',
       date: '2026-06-06',
       time: '08:30',
-      type: 'meeting',
       priority: 'high',
       isCompleted: true,
     },
     {
       id: 'ev-2',
       title: 'Консилиум по сложному пациенту (ОРИТ)',
+      type: 'task',
       date: '2026-06-06',
       time: '11:00',
-      type: 'review',
       priority: 'critical',
       isCompleted: false,
     },
     {
       id: 'ev-3',
       title: 'Вебинар РКО: новые клинические рекомендации',
+      type: 'task',
       date: '2026-06-06',
       time: '15:00',
-      type: 'meeting',
       priority: 'medium',
       isCompleted: false,
     }
@@ -222,9 +219,8 @@ export function getStoredBookmarks(): DesktopBookmark[] {
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed.map((b, i) => ({
           id: String(b.id || `bm-${i + 1}`),
-          title: String(b.title || 'Ссылка'),
-          url: String(b.url || 'https://'),
-          type: (['link', 'file', 'folder'].includes(b.type) ? b.type : 'link') as 'link' | 'file' | 'folder',
+          title: String(b.name || b.title || 'Ссылка'),
+          url: String(b.url || ''),
           category: String(b.category || 'Система'),
           icon: b.icon,
           color: b.color,
@@ -371,25 +367,17 @@ export const TEST_AGENTS_PROFILES: UserProfile[] = [
     feeds: [
       {
         id: 'feed-mt-1',
-        title: 'Ремонт мобильных (YouTube)',
-        type: 'youtube',
-        searchQuery: 'ремонт смартфонов пайка',
-        hashtags: ['BGA', 'iPhone', 'Android'],
-        url: 'https://www.youtube.com/results?search_query=%D1%80%D0%B5%D0%BC%D0%BE%D0%BD%D1%82%20%D1%81%D0%BC%D0%B0%D1%80%D1%82%D1%84%D0%BE%D0%BD%D0%BE%D0%B2%20%D0%BF%D0%B0%D0%B9%D0%BA%D0%B0',
+        name: 'Ремонт мобильных (YouTube)',
         category: 'Инженерия',
         enabled: true,
-        status: 'idle',
+        status: 'idle', sources: [],
       },
       {
         id: 'feed-mt-2',
-        title: 'Ремонт телефонов (Reddit)',
-        type: 'reddit',
-        searchQuery: 'mobilerepair',
-        hashtags: ['Repair', 'FRP', 'Schematics'],
-        url: 'https://www.reddit.com/r/mobilerepair/.rss',
+        name: 'Ремонт телефонов (Reddit)',
         category: 'Инженерия',
         enabled: true,
-        status: 'idle',
+        status: 'idle', sources: [],
       }
     ],
     appStyle: 'engineer',
@@ -422,25 +410,17 @@ export const TEST_AGENTS_PROFILES: UserProfile[] = [
     feeds: [
       {
         id: 'feed-cul-1',
-        title: 'Кулинарные рецепты (Pikabu)',
-        type: 'pikabu',
-        searchQuery: 'Рецепты',
-        hashtags: ['Кулинария', 'Выпечка', 'Рецепт'],
-        url: 'https://pikabu.ru/tag/%D0%A0%D0%B5%D1%86%D0%B5%D0%BF%D1%82%D1%8B/hot',
+        name: 'Кулинарные рецепты (Pikabu)',
         category: 'Кулинария',
         enabled: true,
-        status: 'idle',
+        status: 'idle', sources: [],
       },
       {
         id: 'feed-cul-2',
-        title: 'Рецепты блюд (YouTube)',
-        type: 'youtube',
-        searchQuery: 'вкусные рецепты пошагово',
-        hashtags: ['ГотовимВместе', 'Ужин', 'Шеф'],
-        url: 'https://www.youtube.com/results?search_query=%D0%B2%D0%BA%D1%83%D1%81%D0%BD%D1%8B%D0%B5%20%D1%80%D0%B5%D0%BC%D0%BE%D0%BD%D1%82%D1%8B%20%D0%BF%D0%BE%D1%88%D0%B0%D0%B3%D0%BE%D0%B2%D0%BE',
+        name: 'Рецепты блюд (YouTube)',
         category: 'Кулинария',
         enabled: true,
-        status: 'idle',
+        status: 'idle', sources: [],
       }
     ],
     appStyle: 'modern',
@@ -473,25 +453,17 @@ export const TEST_AGENTS_PROFILES: UserProfile[] = [
     feeds: [
       {
         id: 'feed-car-1',
-        title: 'Ремонт автомобилей (Pikabu)',
-        type: 'pikabu',
-        searchQuery: 'Ремонт авто',
-        hashtags: ['РемонтАвто', 'ДВС', 'Гараж'],
-        url: 'https://pikabu.ru/tag/%D0%A0%D0%B5%D0%BC%D0%BE%D0%BD%D1%82%20%D0%B0%D0%B2%D1%82%D0%BE/hot',
+        name: 'Ремонт автомобилей (Pikabu)',
         category: 'Авто',
         enabled: true,
-        status: 'idle',
+        status: 'idle', sources: [],
       },
       {
         id: 'feed-car-2',
-        title: 'Ремонт двигателей (YouTube)',
-        type: 'youtube',
-        searchQuery: 'ремонт двигателя авто',
-        hashtags: ['ДВС', 'Автомеханик', 'СТО'],
-        url: 'https://www.youtube.com/results?search_query=%D1%80%D0%B5%D0%BC%D0%BE%D0%BD%D1%82%20%D0%B4%D0%B2%D0%B8%D0%B2%D0%B0%D1%82%D0%B5%D0%BB%D1%8F%20%D0%B0%D0%B2%D1%82%D0%BE',
+        name: 'Ремонт двигателей (YouTube)',
         category: 'Авто',
         enabled: true,
-        status: 'idle',
+        status: 'idle', sources: [],
       }
     ],
     appStyle: 'classic',
@@ -686,7 +658,7 @@ export async function syncAllProfilesWithFirestore(): Promise<UserProfile[]> {
         if (cp.id) {
           const existing = mergedMap.get(cp.id);
           if (existing) {
-            const cpHasDefaultMedical = Array.isArray(cp.feeds) && (cp.feeds.length > 25 || cp.feeds.some(f => f.url && (f.url.includes('who.int') || f.url.includes('scardio.ru'))));
+            const cpHasDefaultMedical = Array.isArray(cp.feeds) && (cp.feeds.length > 25 || cp.feeds.some(f => f.sources && f.sources.some(s => s.url && (s.url.includes('who.int') || s.url.includes('scardio.ru')))));
             const existingHasCustom = Array.isArray(existing.feeds) && existing.feeds.length <= 25;
             
             const bestFeeds = (cpHasDefaultMedical && existingHasCustom) ? existing.feeds : ((existing.feeds && existing.feeds.length > 0) ? existing.feeds : (cp.feeds || ENGINEER_DEFAULT_FEEDS));

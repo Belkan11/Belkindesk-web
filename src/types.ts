@@ -59,13 +59,64 @@ export interface Article {
   symptom?: string;
   diagnosis?: string;
   solution?: string;
+  contentStatus?: 'full' | 'partial' | 'title_only' | 'error';
+  fetchedAt?: string;
 }
 
-export interface FeedSource {
+export type SourceType = 'rss' | 'atom' | 'website' | 'youtube' | 'reddit' | 'telegram' | 'search' | 'custom' | 'pikabu' | '4pda' | 'ifixit';
+
+export interface NewsSource {
+  id: string;
+  name: string;
+  type: SourceType;
+  enabled: boolean;
+  url?: string;
+  searchUrl?: string;
+  query?: string;
+  keywords?: string[];
+  excludeKeywords?: string[];
+  language?: string;
+  maxArticles?: number;
+}
+
+export interface CardTemplate {
+  showImage: boolean;
+  showSource: boolean;
+  showDate: boolean;
+  showAuthor: boolean;
+  showDescription: boolean;
+  showContent: boolean;
+  showKeywords: boolean;
+  showAiButton: boolean;
+}
+
+export interface FeedConfig {
+  id: string;
+  name: string;
+  description?: string;
+  category?: string; // To group feeds in UI
+  icon?: string;
+  sources: NewsSource[];
+  keywords?: string[];
+  excludeKeywords?: string[];
+  language?: string;
+  refreshInterval?: number;
+  maxArticles?: number;
+  cardTemplate?: CardTemplate;
+  enabled: boolean;
+  isPinned?: boolean;
+  status?: 'active' | 'error' | 'loading' | 'idle';
+  errorMessage?: string;
+  itemCount?: number;
+  unreadCount?: number;
+}
+
+// Deprecated old FeedSource, keep for backward compatibility or remove if fully refactored
+export interface OldFeedSource {
   id: string;
   title: string;
   url: string;
-  type?: 'youtube' | 'rss' | '4pda' | 'pikabu' | 'telegram' | 'reddit';
+  type?: 'youtube' | 'rss' | '4pda' | 'pikabu' | 'telegram' | 'reddit' | 'website' | 'search';
   searchQuery?: string;
   hashtags?: string[];
   siteUrl?: string;
@@ -192,7 +243,7 @@ export interface UserProfile {
   city?: string;
   timeZone?: string;
   workspaceConfig?: UserWorkspaceConfig;
-  feeds: FeedSource[];
+  feeds: FeedConfig[];
   starredArticleIds?: string[];
   readArticleIds?: string[];
   savedLaterArticleIds?: string[];

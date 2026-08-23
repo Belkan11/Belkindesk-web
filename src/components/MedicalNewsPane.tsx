@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Search, Star, AlignLeft, LayoutGrid, Image as ImageIcon, Sparkles, Clock, Check, Trash2, Plus, RotateCw } from 'lucide-react';
-import { Article, FeedSource, AppArchetypeStyle } from '../types';
+import { Article, FeedConfig, AppArchetypeStyle } from '../types';
 
 interface MedicalNewsPaneProps {
   articles: Article[];
-  feeds: FeedSource[];
+  feeds: FeedConfig[];
   activeFeedId: string | null;
   onSelectFeed: (feedId: string | null) => void;
   onSelectArticle: (article: Article) => void;

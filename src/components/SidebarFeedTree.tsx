@@ -25,7 +25,7 @@ import {
   ShieldCheck,
   Gamepad2
 } from 'lucide-react';
-import { FeedSource, UserProfile } from '../types';
+import { FeedConfig, UserProfile } from '../types';
 
 interface SidebarFeedTreeProps {
   currentUser: UserProfile;
@@ -70,7 +70,7 @@ export const SidebarFeedTree: React.FC<SidebarFeedTreeProps> = ({
   };
 
   // Group feeds by category
-  const categoriesMap: Record<string, FeedSource[]> = {};
+  const categoriesMap: Record<string, FeedConfig[]> = {};
   currentUser.feeds.forEach((feed) => {
     const cat = feed.category || 'Другое';
     if (!categoriesMap[cat]) categoriesMap[cat] = [];
@@ -215,7 +215,7 @@ export const SidebarFeedTree: React.FC<SidebarFeedTreeProps> = ({
                 >
                   <div className="flex items-center gap-2 truncate">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"></span>
-                    <span className="truncate">{feed.title}</span>
+                    <span className="truncate">{feed.name}</span>
                   </div>
                   <div className="flex items-center gap-1">
                     {unread > 0 && (
@@ -327,7 +327,7 @@ export const SidebarFeedTree: React.FC<SidebarFeedTreeProps> = ({
                                     : 'bg-emerald-500/80'
                                 }`}
                               ></span>
-                              <span className="truncate">{feed.title}</span>
+                              <span className="truncate">{feed.name}</span>
                             </div>
 
                             <div className="flex items-center gap-1">

@@ -28,7 +28,7 @@ import {
   Globe,
   Compass
 } from 'lucide-react';
-import { FeedSource, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle } from '../types';
+import { FeedConfig, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle } from '../types';
 import { MEDICAL_FEEDS, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS, CURATED_FEED_PRESETS } from '../data/curatedFeeds';
 import { INITIAL_MEDICAL_TIMERS } from '../utils/storage';
 import { 
@@ -47,8 +47,8 @@ interface ControlCenterModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialTab?: string;
-  feeds: FeedSource[];
-  onUpdateFeeds: (feeds: FeedSource[]) => void;
+  feeds: FeedConfig[];
+  onUpdateFeeds: (feeds: FeedConfig[]) => void;
   timers: MedicalTimerItem[];
   onUpdateTimers: (timers: MedicalTimerItem[]) => void;
   accessibility: AccessibilityConfig;
@@ -66,7 +66,7 @@ interface ControlCenterModalProps {
   scheduledHours: number[];
   onChangeScheduledHours: (hours: number[]) => void;
   
-  onTriggerRefresh?: (overrideFeeds?: FeedSource[]) => void;
+  onTriggerRefresh?: (overrideFeeds?: FeedConfig[]) => void;
   isRefreshing?: boolean;
   onPlaySound?: (type: 'click' | 'success' | 'star') => void;
 }
@@ -103,7 +103,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   const [localAcuity, setLocalAcuity] = useState<string>(accessibility?.visualAcuity || 'Не указывать');
 
   // Feeds state
-  const [localFeeds, setLocalFeeds] = useState<FeedSource[]>(() => Array.isArray(feeds) ? [...feeds] : []);
+  const [localFeeds, setLocalFeeds] = useState<FeedConfig[]>(() => Array.isArray(feeds) ? [...feeds] : []);
   const [selectedFeedIndex, setSelectedFeedIndex] = useState<number>(0);
   
   // Feed Form Inputs matching the screenshot
@@ -155,7 +155,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     if (localFeeds.length > 0 && selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length) {
       const f = localFeeds[selectedFeedIndex];
       setFeedType(f.type || (f.url.includes('youtube.com') ? 'youtube' : f.url.includes('pikabu.ru') ? 'pikabu' : f.url.includes('4pda') ? '4pda' : f.url.includes('reddit') ? 'reddit' : 'rss'));
-      setFeedName(f.title || '');
+      setFeedName(f.name || '');
       setFeedSearchQuery(f.searchQuery || f.url || '');
       setFeedHashtagsText(Array.isArray(f.hashtags) ? f.hashtags.join('\n') : (f.tags ? f.tags.join('\n') : ''));
     }
@@ -208,7 +208,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
         }
         updated[selectedFeedIndex] = {
           ...updated[selectedFeedIndex],
-          title: feedName.trim(),
+          name: feedName.trim(),
           type: feedType,
           searchQuery: feedSearchQuery.trim(),
           hashtags: tags,
@@ -272,7 +272,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     if (selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length) {
       updated[selectedFeedIndex] = {
         ...updated[selectedFeedIndex],
-        title: feedName.trim(),
+        name: feedName.trim(),
         type: feedType,
         searchQuery: feedSearchQuery.trim(),
         hashtags: tags,
@@ -282,16 +282,22 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       setLocalFeeds(updated);
     } else {
       // Add new
-      const newFeed: FeedSource = {
+      const newFeed: FeedConfig = {
         id: `feed-${Date.now()}`,
-        title: feedName.trim(),
-        type: feedType,
-        searchQuery: feedSearchQuery.trim(),
-        hashtags: tags,
-        url: generatedUrl,
+        name: feedName.trim(),
         category: 'Инженерия',
-        status: 'idle',
         enabled: true,
+        sources: [
+          {
+            id: `src-${Date.now()}`,
+            name: feedName.trim(),
+            type: feedType as any,
+            url: generatedUrl,
+            query: feedSearchQuery.trim(),
+            keywords: tags,
+            enabled: true
+          }
+        ]
       };
       updated = [...localFeeds, newFeed];
       setLocalFeeds(updated);
@@ -302,16 +308,22 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   };
 
   const handleAddNewFeed = () => {
-    const newF: FeedSource = {
+    const newF: FeedConfig = {
       id: `feed-${Date.now()}`,
-      title: 'Новый источник',
-      type: 'youtube',
-      searchQuery: 'поисковый запрос',
-      hashtags: ['тег 1', 'тег 2'],
-      url: 'https://www.youtube.com/',
+      name: 'Новый источник',
       category: 'Пользовательский',
-      status: 'idle',
       enabled: true,
+      sources: [
+        {
+          id: `src-${Date.now()}`,
+          name: 'Новый источник',
+          type: 'youtube',
+          url: 'https://www.youtube.com/',
+          query: 'поисковый запрос',
+          keywords: ['тег 1', 'тег 2'],
+          enabled: true
+        }
+      ]
     };
     setLocalFeeds([...localFeeds, newF]);
     setSelectedFeedIndex(localFeeds.length);
@@ -474,23 +486,25 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                     <div
                       key={preset.category}
                       onClick={() => {
-                        const newFeeds: FeedSource[] = preset.feeds.map((f, i) => ({
+                        const newFeeds: FeedConfig[] = preset.feeds.map((f: any, i) => ({
                           id: `preset-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 4)}`,
-                          title: f.title,
-                          url: f.url,
-                          siteUrl: f.siteUrl,
-                          description: f.description,
+                          name: f.name || f.title,
                           category: preset.category,
-                          type: f.url.includes('youtube.com') ? 'youtube' : f.url.includes('pikabu.ru') ? 'pikabu' : f.url.includes('4pda') ? '4pda' : 'rss',
-                          hashtags: f.tags || [],
                           enabled: true,
-                          status: 'idle'
+                          sources: [
+                            {
+                              id: `src-${Date.now()}-${i}`,
+                              name: f.name || f.title,
+                              type: (f.url && f.url.includes('youtube.com')) ? 'youtube' : (f.url && f.url.includes('pikabu.ru')) ? 'pikabu' : (f.url && f.url.includes('4pda')) ? '4pda' : 'rss',
+                              url: f.url,
+                              keywords: f.tags || f.hashtags || [],
+                              enabled: true
+                            }
+                          ]
                         }));
-                        // Append new feeds while avoiding exact duplicates by url or title
+                        // Append new feeds
                         setLocalFeeds(prev => {
-                          const existingUrls = new Set(prev.map(p => p.url));
-                          const filteredNew = newFeeds.filter(nf => !existingUrls.has(nf.url));
-                          return [...prev, ...filteredNew];
+                          return [...prev, ...newFeeds];
                         });
                         onPlaySound?.('success');
                       }}
@@ -549,7 +563,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                         </span>
                         <div className="min-w-0 flex-1">
                           <div className="font-semibold text-slate-100 truncate flex items-center gap-2">
-                            <span>{feed.title}</span>
+                            <span>{feed.name}</span>
                             {isError && (
                               <span className="px-1.5 py-0.2 bg-rose-500/20 text-rose-300 text-[9px] rounded border border-rose-500/30 uppercase font-bold tracking-normal">
                                 Нерабочий / Ошибка

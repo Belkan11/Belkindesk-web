@@ -7,7 +7,7 @@ import {
   MedicalTimerItem, 
   AccessibilityConfig, 
   Article, 
-  FeedSource, 
+  FeedConfig, 
   WorkDaySchedule,
   AppArchetypeStyle,
   DesktopBookmark
@@ -93,7 +93,7 @@ export default function App() {
   const [lastScheduledSlot, setLastScheduledSlot] = useState<number | undefined>(() => currentUser?.lastScheduledSlot);
 
   // Feeds and Articles (User-isolated)
-  const [feeds, setFeeds] = useState<FeedSource[]>(() => currentUser?.feeds || ENGINEER_DEFAULT_FEEDS);
+  const [feeds, setFeeds] = useState<FeedConfig[]>(() => currentUser?.feeds || ENGINEER_DEFAULT_FEEDS);
   const [articles, setArticles] = useState<Article[]>(() => getStoredArticles(getActiveSessionUserId() || undefined));
   const [activeFeedId, setActiveFeedId] = useState<string | null>(null);
   const [isStarredFilter, setIsStarredFilter] = useState(false);
@@ -229,12 +229,12 @@ export default function App() {
 
 
   // Live RSS Feeds Refresh (sequential scraping of all sources one by one)
-  const handleRefresh = useCallback(async (overrideFeeds?: FeedSource[]) => {
+  const handleRefresh = useCallback(async (overrideFeeds?: FeedConfig[]) => {
     setIsRefreshing(true);
     setRefreshStatusMessage('Подключение к источникам и последовательный скрейпинг...');
     try {
       const feedsToUse = overrideFeeds || feeds;
-      const activeFeeds = feedsToUse.filter((f) => (f.url || f.searchQuery) && f.enabled !== false);
+      const activeFeeds = feedsToUse.filter(f => f.enabled !== false);
       if (activeFeeds.length === 0) {
         setRefreshStatusMessage('Нет активных источников для обновления.');
         setTimeout(() => {
@@ -247,35 +247,54 @@ export default function App() {
       const rawArticles: Article[] = [];
       for (let i = 0; i < activeFeeds.length; i++) {
         const feed = activeFeeds[i];
-        setRefreshStatusMessage(`Скрейпинг источника ${i + 1} из ${activeFeeds.length}: ${feed.title || feed.url || 'Источник'}...`);
-        try {
-          const feedResult = await fetchFeedArticles(feed, 50);
-          if (feedResult.error || feedResult.articles.length === 0) {
-            setFeeds(prev => prev.map(f => f.id === feed.id ? { ...f, status: 'error', errorMessage: feedResult.error || 'Источник недоступен или пуст' } : f));
-          } else {
-            setFeeds(prev => prev.map(f => f.id === feed.id ? { ...f, status: 'active', errorMessage: undefined, itemCount: feedResult.articles.length } : f));
-            rawArticles.push(...feedResult.articles.slice(0, 50));
+        setRefreshStatusMessage(`Обработка ленты ${i + 1} из ${activeFeeds.length}: ${feed.name}...`);
+        
+        const activeSources = feed.sources?.filter(s => s.enabled !== false) || [];
+        for (let j = 0; j < activeSources.length; j++) {
+          const source = activeSources[j];
+          setRefreshStatusMessage(`Скрейпинг источника ${j + 1} из ${activeSources.length} (${source.name || source.type}) в ленте ${feed.name}...`);
+          try {
+            // Include feed-level keywords in the source request if needed
+            const fetchConfig = {
+              ...source,
+              keywords: [...(source.keywords || []), ...(feed.keywords || [])],
+              excludeKeywords: [...(source.excludeKeywords || []), ...(feed.excludeKeywords || [])],
+              feedId: feed.id,
+              feedTitle: feed.name,
+              feedCategory: feed.category
+            };
+            const feedResult = await fetchFeedArticles(fetchConfig as any, feed.maxArticles || 50);
+            if (!feedResult.error && feedResult.articles.length > 0) {
+              rawArticles.push(...feedResult.articles);
+            }
+          } catch (feedErr: any) {
+            console.warn(`Source ${source.name} in feed ${feed.name} scraping failed:`, feedErr);
           }
-        } catch (feedErr: any) {
-          console.warn(`Feed ${feed.title} scraping failed:`, feedErr);
-          setFeeds(prev => prev.map(f => f.id === feed.id ? { ...f, status: 'error', errorMessage: feedErr.message || 'Ошибка сети' } : f));
         }
       }
 
       setRefreshStatusMessage('Скрейпинг всех источников завершен. Фильтрация дубликатов...');
-      // Load seen list to prevent duplicate news
-      const seenSet = new Set(getSeenArticlesList());
-      
-      // Load current articles titles/links
+      // Deduplication across all fetched articles based on canonical URL or title
+      const uniqueNewArticles: Article[] = [];
+      const seenLinks = new Set<string>();
+      const seenTitles = new Set<string>();
+
+      // Read state
       const currentKeys = new Set<string>();
       articles.forEach((a) => {
         if (a.title) currentKeys.add(a.title.trim().toLowerCase());
         if (a.link) currentKeys.add(a.link.trim().toLowerCase());
       });
 
-      const uniqueNewArticles: Article[] = [];
       rawArticles.forEach((art, idx) => {
-        // Always include fetched or fallback articles with unique fresh IDs so user never gets 0 cards
+        const l = art.link || '';
+        const t = (art.title || '').toLowerCase().trim();
+        if (currentKeys.has(t) || currentKeys.has(l) || seenLinks.has(l) || seenTitles.has(t)) {
+          return;
+        }
+        if (l) seenLinks.add(l);
+        if (t) seenTitles.add(t);
+        
         uniqueNewArticles.push({
           ...art,
           id: `art_ref_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`
@@ -284,7 +303,6 @@ export default function App() {
 
       if (uniqueNewArticles.length > 0) {
         setRefreshStatusMessage(`Найдено ${uniqueNewArticles.length} материалов. Обновление ленты...`);
-        // Prepend new articles
         let updatedArticlesList: Article[] = [];
         setArticles((prev) => {
           updatedArticlesList = [...uniqueNewArticles, ...prev].slice(0, 150);
@@ -292,7 +310,7 @@ export default function App() {
         });
         playUiSound('success');
 
-        // Fallback local layout filling without calling Gemini API to save quota
+        // Fallback local layout filling without AI
         setArticles((current) => {
           return current.map(c => {
             const needsLocalFill = !c.titleRu || !c.summaryOneLine || !c.summaryThreeLines;

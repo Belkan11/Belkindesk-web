@@ -82,8 +82,7 @@ export const aiProviderRegistry = {
   openai: (baseUrl: string, apiKey: string) => new OpenAICompatibleProvider(baseUrl, apiKey)
 };
 
-function getAiProvider(req?: any): AIProvider {
-  if (!req || !req.headers) return aiProviderRegistry.gemini();
+function getAiProvider(req: express.Request): AIProvider {
   const provider = req.headers['x-user-ai-provider'] as string || 'gemini';
   const key = req.headers['x-user-ai-key'] as string || '';
   const baseUrl = req.headers['x-user-ai-url'] as string || 'https://api.openai.com/v1';
@@ -93,6 +92,7 @@ function getAiProvider(req?: any): AIProvider {
   }
   return aiProviderRegistry.gemini(key);
 }
+
 
 // Setup XML Parser with entity decoding
 const xmlParser = new XMLParser({
@@ -992,95 +992,14 @@ Respond strictly with valid JSON conforming to this schema. Do not include markd
 }
 
 // ----------------------------------------------------
-// Adapter Registry
-// ----------------------------------------------------
-interface SourceAdapter {
-  type: string;
-  fetch: (params: { url: string; searchQuery: string; limit: number }) => Promise<any[]>;
-}
-const sourceAdapterRegistry: Record<string, SourceAdapter> = {
-  reddit: {
-    type: 'reddit',
-    fetch: async ({ url }) => {
-      let sub = 'mobilerepair';
-      if (url) {
-        const match = url.match(/reddit\.com\/r\/([^/]+)/i);
-        sub = match ? match[1] : url.replace(/^r\//i, '').trim();
-      }
-      return await scrapeReddit(sub, 50);
-    }
-  },
-  telegram: {
-    type: 'telegram',
-    fetch: async ({ url }) => {
-      let chan = 'gsmtutors';
-      if (url) {
-        const match = url.match(/t\.me\/(?:s\/)?([^/]+)/i);
-        chan = match ? match[1] : url.replace(/^@/i, '').trim();
-      }
-      return await scrapeTelegramPublic(chan, 50);
-    }
-  },
-  pikabu: {
-    type: 'pikabu',
-    fetch: async ({ url, searchQuery }) => {
-      let tag = 'Ремонт смартфонов';
-      if (searchQuery) {
-        tag = searchQuery;
-      } else if (url) {
-        const match = url.match(/pikabu\.ru\/tag\/([^/]+)/i);
-        tag = match ? decodeURIComponent(match[1]) : url;
-      }
-      return await scrapePikabu(tag, 50);
-    }
-  },
-  youtube: {
-    type: 'youtube',
-    fetch: async ({ url, searchQuery, limit }) => {
-      const q = searchQuery || url || 'ремонт телефонов';
-      return await scrapeYouTube(q, Math.max(limit, 15));
-    }
-  },
-  ifixit: {
-    type: 'ifixit',
-    fetch: async ({ url, searchQuery, limit }) => {
-      const q = searchQuery || url || 'iphone repair';
-      return await scrapeIFixit(q, Math.max(limit, 15));
-    }
-  },
-  '4pda': {
-    type: '4pda',
-    fetch: async () => []
-  },
-  rss: {
-    type: 'rss',
-    fetch: async () => []
-  },
-  atom: {
-    type: 'atom',
-    fetch: async () => []
-  }
-};
-
-// ----------------------------------------------------
 // 1. RSS / Atom Feed Fetch & Parse Endpoint (with 10-item limit per source)
 // ----------------------------------------------------
 app.post("/api/rss/fetch", async (req, res) => {
-  const { url, feedId, limit: requestedLimit, type, searchQuery, hashtags, keywords, excludeKeywords, category, title } = req.body;
-  const limit = typeof requestedLimit === 'number' && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 50;
-
-  const cleanType = type ? String(type).toLowerCase().trim() : '';
-  let scrapedArticles: any[] = [];
-  try {
-    const adapter = sourceAdapterRegistry[cleanType];
-    if (adapter) {
-      scrapedArticles = await adapter.fetch({ url, searchQuery, limit });
-    }
-  } catch (scrapeErr: any) {
-    addLog("warn", `Прямой скрейпинг завершился предупреждением: ${scrapeErr.message}`);
-  }
+  const { url, feedId, limit: requestedLimit, type, searchQuery, hashtags, category, title } = req.body;
+  const limit = typeof requestedLimit === 'number' && requestedLimit > 0 ? Math.min(requestedLimit, 20) : 10;
 
   // Intercept and run SearchOrchestrator if we have platform/search criteria!
+  const cleanType = type ? String(type).toLowerCase().trim() : '';
   if (cleanType === 'youtube' || cleanType === '4pda' || cleanType === 'reddit' || cleanType === 'pikabu' || searchQuery || (hashtags && hashtags.length > 0)) {
     try {
       const articles = await runSearchOrchestrator({
@@ -1091,13 +1010,11 @@ app.post("/api/rss/fetch", async (req, res) => {
         category,
         title
       });
-      // Merge with custom scraping
-      const allArticles = [...scrapedArticles, ...articles].filter((v, i, a) => a.findIndex(t => t.id === v.id || t.title === v.title) === i);
       res.json({
         title: title || type || "Поиск",
         description: `Поисковая выдача для ${searchQuery || 'технологий'}`,
         link: url || "https://google.com",
-        articles: allArticles,
+        articles,
       });
       return;
     } catch (err: any) {

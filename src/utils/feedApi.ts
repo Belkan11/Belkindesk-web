@@ -1,4 +1,4 @@
-import { Article, FeedSource, AIDiscoveredFeed, AIDigestResult } from '../types';
+import { Article, FeedConfig, AIDiscoveredFeed, AIDigestResult } from '../types';
 
 export interface FeedFetchResult {
   title: string;
@@ -8,20 +8,21 @@ export interface FeedFetchResult {
   itemCount: number;
 }
 
-export async function fetchFeedArticles(feed: FeedSource, limit = 50): Promise<FeedFetchResult & { error?: string }> {
+export async function fetchFeedArticles(feed: any, limit = 50): Promise<FeedFetchResult & { error?: string }> {
   try {
     const res = await fetch('/api/rss/fetch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         url: feed.url, 
-        feedId: feed.id, 
+        feedId: feed.feedId || feed.id, 
         limit,
         type: feed.type,
-        searchQuery: feed.searchQuery,
-        hashtags: feed.hashtags,
-        category: feed.category,
-        title: feed.title
+        searchQuery: feed.query || feed.searchQuery,
+        keywords: feed.keywords,
+        excludeKeywords: feed.excludeKeywords,
+        category: feed.feedCategory || feed.category,
+        title: feed.feedTitle || feed.title || feed.name
       }),
     });
 
@@ -33,13 +34,13 @@ export async function fetchFeedArticles(feed: FeedSource, limit = 50): Promise<F
     const rawArticles = data.articles || [];
     const articles = rawArticles.slice(0, limit).map((art: Article) => ({
       ...art,
-      feedId: feed.id,
-      feedTitle: feed.title || art.feedTitle || 'Лента новостей',
-      feedCategory: feed.category,
+      feedId: feed.feedId || feed.id,
+      feedTitle: feed.feedTitle || feed.title || feed.name || art.feedTitle || 'Лента новостей',
+      feedCategory: feed.feedCategory || feed.category,
     }));
 
     return {
-      title: data.title || feed.title,
+      title: data.title || feed.title || feed.name,
       description: data.description,
       link: data.link,
       itemCount: articles.length,
@@ -47,10 +48,10 @@ export async function fetchFeedArticles(feed: FeedSource, limit = 50): Promise<F
     };
   } catch (err: unknown) {
     const error = err as Error;
-    console.warn(`Error loading feed ${feed.title}:`, error.message);
+    console.warn(`Error loading feed ${feed.title || feed.name}:`, error.message);
     
     return {
-      title: feed.title,
+      title: feed.title || feed.name,
       description: feed.description || 'Лента не доступна',
       articles: [],
       itemCount: 0,
@@ -59,7 +60,7 @@ export async function fetchFeedArticles(feed: FeedSource, limit = 50): Promise<F
   }
 }
 
-function generateFallbackArticles(feed: FeedSource): Article[] {
+function generateFallbackArticles(feed: FeedConfig): Article[] {
   return [];
 }
 

@@ -19,14 +19,14 @@ import {
   Zap
 } from 'lucide-react';
 import { CURATED_FEED_PRESETS } from '../data/curatedFeeds';
-import { FeedSource, AIDiscoveredFeed } from '../types';
+import { FeedConfig, AIDiscoveredFeed } from '../types';
 import { aiDiscoverFeeds, discoverFeedsFromUrl, parseOpmlText } from '../utils/feedApi';
 
 interface AddFeedModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAddFeed: (feed: Omit<FeedSource, 'id'>) => void;
-  onAddMultipleFeeds: (feeds: Array<Omit<FeedSource, 'id'>>) => void;
+  onAddFeed: (feed: Omit<FeedConfig, 'id'>) => void;
+  onAddMultipleFeeds: (feeds: Array<Omit<FeedConfig, 'id'>>) => void;
   customCategories: string[];
   existingFeedUrls: string[];
 }

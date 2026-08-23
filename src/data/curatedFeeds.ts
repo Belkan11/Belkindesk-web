@@ -1,4 +1,4 @@
-import { CuratedCategoryPreset, FeedSource, Article } from '../types';
+import { CuratedCategoryPreset, FeedConfig, Article, NewsSource } from '../types';
 
 export const DEFAULT_AI_PROMPTS = {
   engineer: 'Перепиши материал как краткую единую практическую сводку для инженера и мастера по ремонту техники. Укажи устройство, симптом, причину и метод диагностики или ремонта. Сохрани модели, маркировки, схемы и профессиональные термины единым связным текстом без воды.',
@@ -10,189 +10,150 @@ export const DEFAULT_AI_PROMPTS = {
   universal: 'Составь четкое связное резюме новости на русском языке: ключевые факты, цифры и практическая суть единым емким текстом без клише, рекламы и искусственного дробления на блоки.'
 };
 
-export const ENGINEER_DEFAULT_FEEDS: FeedSource[] = [
+export const ENGINEER_DEFAULT_FEEDS: FeedConfig[] = [
   {
     id: 'feed-yt-frp',
-    title: 'FRP',
-    type: 'youtube',
-    searchQuery: 'android smartphone tablet unlock FRP bypass',
-    hashtags: ['FRP bypass', 'Google account remove', 'Android unlock', 'screen lock remove', 'PIN lock remove', 'Honor FRP', 'Huawei FRP', 'Oppo FRP', 'Realme FRP', 'Vivo FRP', 'Samsung FRP', 'Xiaomi FRP'],
-    url: 'https://www.youtube.com/results?search_query=android+smartphone+tablet+unlock+FRP+bypass',
+    name: 'FRP',
     category: 'Разблокировка & ПО',
     description: 'Инструкции и байпас FRP / Google аккаунтов на телефонах и планшетах',
-    status: 'idle',
     enabled: true,
+    sources: [
+      {
+        id: 'src-yt-frp',
+        name: 'YouTube FRP Search',
+        type: 'youtube',
+        query: 'android smartphone tablet unlock FRP bypass',
+        enabled: true,
+      }
+    ],
+    keywords: ['FRP bypass', 'Google account remove', 'Android unlock', 'screen lock remove', 'PIN lock remove', 'Honor FRP', 'Huawei FRP', 'Oppo FRP', 'Realme FRP', 'Vivo FRP', 'Samsung FRP', 'Xiaomi FRP'],
   },
   {
     id: 'feed-yt-android-repair',
-    title: 'Android',
-    type: 'youtube',
-    searchQuery: 'микропайка телефон ремонт платы samsung xiaomi',
-    hashtags: ['ремонт телефонов', 'пайка bga', 'reballing', 'microsoldering', 'samsung repair', 'xiaomi repair'],
-    url: 'https://www.youtube.com/results?search_query=микропайка+телефон+ремонт+платы+samsung+xiaomi',
+    name: 'Android',
     category: 'Пайка & Железо',
     description: 'Микропайка, реболл процессоров, замена контроллеров питания',
-    status: 'idle',
     enabled: true,
+    sources: [
+      {
+        id: 'src-yt-android',
+        name: 'YouTube Android Repair Search',
+        type: 'youtube',
+        query: 'микропайка телефон ремонт платы samsung xiaomi',
+        enabled: true,
+      }
+    ],
+    keywords: ['ремонт телефонов', 'пайка bga', 'reballing', 'microsoldering', 'samsung repair', 'xiaomi repair'],
   },
   {
     id: 'feed-yt-apple-repair',
-    title: 'Apple',
-    type: 'youtube',
-    searchQuery: 'apple #ремонт, плата, пайка, микропайка, не включается, не заряжается, pmic, no power, bootloop, charging ic, usb-c, short circuit, board repair, microsoldering, reball',
-    hashtags: ['apple repair', 'iphone no power', 'pmic', 'short circuit', 'tristar', 'u2', 'nand swap'],
-    url: 'https://www.youtube.com/results?search_query=apple+board+repair+microsoldering',
+    name: 'Apple',
     category: 'Apple Инженерия',
     description: 'Диагностика коротких замыканий, замена PMIC, ремонт цепей питания iPhone/iPad',
-    status: 'idle',
     enabled: true,
+    sources: [
+      {
+        id: 'src-yt-apple',
+        name: 'YouTube Apple Repair Search',
+        type: 'youtube',
+        query: 'apple board repair microsoldering',
+        enabled: true,
+      }
+    ],
+    keywords: ['apple repair', 'iphone no power', 'pmic', 'short circuit', 'tristar', 'u2', 'nand swap'],
   },
   {
     id: 'feed-pikabu-repair',
-    title: 'Ремонт техники',
-    type: 'pikabu',
-    searchQuery: 'ремонт техники смартфоны пайка микроскоп',
-    hashtags: ['ремонт техники', 'ремонт телефонов', 'электроника', 'длиннопост'],
-    url: 'https://pikabu.ru/tag/Ремонт%20техники/hot',
+    name: 'Ремонт техники',
     category: 'Кейсы ремонтов',
     description: 'Пошаговые фотоотчеты и интересные случаи ремонта от мастеров',
-    status: 'idle',
     enabled: true,
+    sources: [
+      {
+        id: 'src-pikabu',
+        name: 'Pikabu Tag',
+        type: 'pikabu',
+        query: 'Ремонт смартфонов',
+        enabled: true,
+      }
+    ],
+    keywords: ['ремонт техники', 'ремонт телефонов', 'электроника', 'длиннопост'],
   },
   {
     id: 'feed-4pda-news',
-    title: '4PDA Hard & Soft',
-    type: '4pda',
-    searchQuery: 'прошивки модификации инструкции схемы',
-    hashtags: ['прошивка', 'android', 'root', 'twrp', 'fastboot'],
-    url: 'https://4pda.to/feed/',
+    name: '4PDA Hard & Soft',
     category: 'Прошивки & 4PDA',
     description: 'Форумные ветки, схемы, дампы памяти и решения софтовых проблем',
-    status: 'idle',
     enabled: true,
+    sources: [
+      {
+        id: 'src-4pda',
+        name: '4PDA RSS',
+        type: '4pda',
+        url: 'https://4pda.to/feed/',
+        enabled: true,
+      }
+    ],
+    keywords: ['прошивка', 'android', 'root', 'twrp', 'fastboot'],
   },
   {
     id: 'feed-reddit-mobilerepair',
-    title: 'Reddit r/mobilerepair',
-    type: 'reddit',
-    searchQuery: 'microsoldering logic board schematic troubleshooting',
-    hashtags: ['mobilerepair', 'microsoldering', 'logicboard', 'schematics'],
-    url: 'https://www.reddit.com/r/mobilerepair/.rss',
+    name: 'Reddit r/mobilerepair',
     category: 'Мировое комьюнити',
     description: 'Обмен опытом с зарубежными инженерами и сервисными центрами',
-    status: 'idle',
     enabled: true,
+    sources: [
+      {
+        id: 'src-reddit',
+        name: 'r/mobilerepair',
+        type: 'reddit',
+        url: 'https://www.reddit.com/r/mobilerepair/.rss',
+        enabled: true,
+      }
+    ],
+    keywords: ['mobilerepair', 'microsoldering', 'logicboard', 'schematics'],
   }
 ];
 
-export const MEDICAL_FEEDS: FeedSource[] = [
+export const MEDICAL_FEEDS: FeedConfig[] = [
   {
     id: 'feed-rko',
-    title: 'РКО — Российское кардиологическое общество',
-    url: 'https://scardio.ru/rss/',
-    siteUrl: 'https://scardio.ru',
+    name: 'РКО — Российское кардиологическое общество',
     category: 'Кардиология РФ',
     description: 'Официальные клинические рекомендации, съезды и новости РКО',
     icon: 'Heart',
-    status: 'idle',
     isPinned: true,
+    enabled: true,
+    sources: [
+      {
+        id: 'src-rko',
+        name: 'Scardio RSS',
+        url: 'https://scardio.ru/rss/',
+        type: 'rss',
+        enabled: true
+      }
+    ]
   },
   {
     id: 'feed-rkj',
-    title: 'Российский кардиологический журнал',
-    url: 'https://russjcardiol.elpub.ru/jour/rss',
-    siteUrl: 'https://russjcardiol.elpub.ru',
+    name: 'Российский кардиологический журнал',
     category: 'Кардиология РФ',
     description: 'Рецензируемый научно-практический журнал ВАК/Scopus',
     icon: 'BookOpen',
-    status: 'idle',
     isPinned: true,
-  },
-  {
-    id: 'feed-minzdrav',
-    title: 'Минздрав России',
-    url: 'https://minzdrav.gov.ru/rss',
-    siteUrl: 'https://minzdrav.gov.ru',
-    category: 'Здравоохранение РФ',
-    description: 'Официальные приказы, стандарты медпомощи и пресс-релизы',
-    icon: 'Shield',
-    status: 'idle',
-    isPinned: true,
-  },
-  {
-    id: 'feed-esc',
-    title: 'ESC — European Society of Cardiology',
-    url: 'https://www.escardio.org/rss/guidelines.xml',
-    siteUrl: 'https://www.escardio.org',
-    category: 'Мировая кардиология',
-    description: 'Европейские клинические гайдлайны и конгрессы ESC',
-    icon: 'Globe',
-    status: 'idle',
-    isPinned: true,
-  },
-  {
-    id: 'feed-acc',
-    title: 'ACC — American College of Cardiology',
-    url: 'https://www.acc.org/rss/clinical-topics',
-    siteUrl: 'https://www.acc.org',
-    category: 'Мировая кардиология',
-    description: 'Образование, клинические протоколы и встречи ACC',
-    icon: 'Activity',
-    status: 'idle',
-    isPinned: true,
-  },
-  {
-    id: 'feed-aha',
-    title: 'AHA — сердце, сосуды (American Heart)',
-    url: 'https://newsroom.heart.org/rss.xml',
-    siteUrl: 'https://www.heart.org',
-    category: 'Мировая кардиология',
-    description: 'Исследования сердечно-сосудистых заболеваний и инсультов',
-    icon: 'HeartPulse',
-    status: 'idle',
-    isPinned: true,
-  },
-  {
-    id: 'feed-jacc',
-    title: 'JACC — новые исследования',
-    url: 'https://www.jacc.org/action/showFeed?type=etoc&feed=rss&jc=jacc',
-    siteUrl: 'https://www.jacc.org',
-    category: 'Клинические журналы',
-    description: 'Journal of the American College of Cardiology',
-    icon: 'FileText',
-    status: 'idle',
-  },
-  {
-    id: 'feed-bmj-heart',
-    title: 'BMJ Heart — клиническая кардиология',
-    url: 'https://heart.bmj.com/rss/current.xml',
-    siteUrl: 'https://heart.bmj.com',
-    category: 'Клинические журналы',
-    description: 'Международный рецензируемый кардиологический журнал BMJ',
-    icon: 'Stethoscope',
-    status: 'idle',
-  },
-  {
-    id: 'feed-nejm',
-    title: 'NEJM — общая клиническая медицина',
-    url: 'https://www.nejm.org/action/showFeed?type=etoc&feed=rss&jc=nejm',
-    siteUrl: 'https://www.nejm.org',
-    category: 'Клинические журналы',
-    description: 'The New England Journal of Medicine',
-    icon: 'BookmarkCheck',
-    status: 'idle',
-  },
-  {
-    id: 'feed-who',
-    title: 'ВОЗ — мировые новости здравоохранения',
-    url: 'https://www.who.int/rss-feeds/news-english.xml',
-    siteUrl: 'https://www.who.int',
-    category: 'Международные стандарты',
-    description: 'Всемирная организация здравоохранения: эпидемиология и протоколы',
-    icon: 'Globe2',
-    status: 'idle',
+    enabled: true,
+    sources: [
+      {
+        id: 'src-rkj',
+        name: 'RKJ RSS',
+        url: 'https://russjcardiol.elpub.ru/jour/rss',
+        type: 'rss',
+        enabled: true
+      }
+    ]
   }
 ];
+
 
 export const INITIAL_MEDICAL_ARTICLES: Article[] = [
   {
