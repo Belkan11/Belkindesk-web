@@ -264,11 +264,13 @@ export default function App() {
               feedCategory: feed.category
             };
             const feedResult = await fetchFeedArticles(fetchConfig as any, feed.maxArticles || 50);
-            if (!feedResult.error && feedResult.articles.length > 0) {
+            if (feedResult.error) {
+              console.warn(`Не удалось получить данные из источника ${source.name || source.url}: ${feedResult.error}`);
+            } else if (feedResult.articles && feedResult.articles.length > 0) {
               rawArticles.push(...feedResult.articles);
             }
           } catch (feedErr: any) {
-            console.warn(`Source ${source.name} in feed ${feed.name} scraping failed:`, feedErr);
+            console.warn(`Не удалось получить данные из источника ${source.name || source.url}: ${feedErr.message}`);
           }
         }
       }

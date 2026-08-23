@@ -153,11 +153,12 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   // When selected feed changes, populate the form fields
   useEffect(() => {
     if (localFeeds.length > 0 && selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length) {
-      const f = localFeeds[selectedFeedIndex];
-      setFeedType(f.type || (f.url.includes('youtube.com') ? 'youtube' : f.url.includes('pikabu.ru') ? 'pikabu' : f.url.includes('4pda') ? '4pda' : f.url.includes('reddit') ? 'reddit' : 'rss'));
-      setFeedName(f.name || '');
-      setFeedSearchQuery(f.searchQuery || f.url || '');
-      setFeedHashtagsText(Array.isArray(f.hashtags) ? f.hashtags.join('\n') : (f.tags ? f.tags.join('\n') : ''));
+      const f = localFeeds[selectedFeedIndex] as any;
+      const primarySource = (f.sources && f.sources[0]) || f;
+      setFeedType(primarySource.type || (primarySource.url?.includes('youtube.com') ? 'youtube' : primarySource.url?.includes('pikabu.ru') ? 'pikabu' : primarySource.url?.includes('4pda') ? '4pda' : primarySource.url?.includes('reddit') ? 'reddit' : 'rss'));
+      setFeedName(f.name || f.title || '');
+      setFeedSearchQuery(primarySource.searchQuery || primarySource.query || '');
+      setFeedHashtagsText(primarySource.hashtags?.join('\n') || primarySource.keywords?.join('\n') || '');
     }
   }, [selectedFeedIndex, localFeeds]);
 
@@ -188,74 +189,14 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     '♥ О ПРОЕКТЕ',
   ];
 
-  const handleSaveAll = () => {
-    try {
-      let feedsToSave = localFeeds;
-      if (selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length && feedName.trim()) {
-        const updated = [...localFeeds];
-        const tags = feedHashtagsText.split('\n').map(t => t.trim()).filter(Boolean);
-        let generatedUrl = '';
-        if (feedType === 'youtube') {
-          generatedUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(feedSearchQuery.trim())}`;
-        } else if (feedType === 'pikabu') {
-          generatedUrl = `https://pikabu.ru/tag/${encodeURIComponent(feedSearchQuery.trim() || 'Ремонт техники')}/hot`;
-        } else if (feedType === '4pda') {
-          generatedUrl = 'https://4pda.to/feed/';
-        } else if (feedType === 'reddit') {
-          generatedUrl = 'https://www.reddit.com/r/mobilerepair/.rss';
-        } else {
-          generatedUrl = feedSearchQuery.trim().startsWith('http') ? feedSearchQuery.trim() : `https://${feedSearchQuery.trim()}`;
-        }
-        updated[selectedFeedIndex] = {
-          ...updated[selectedFeedIndex],
-          name: feedName.trim(),
-          type: feedType,
-          searchQuery: feedSearchQuery.trim(),
-          hashtags: tags,
-          url: generatedUrl,
-        };
-        feedsToSave = updated;
-      }
-
-      const validScale = [100, 125, 150, 175, 200].includes(localScale) ? localScale : 100;
-      onUpdateAccessibility({
-        scalePercent: validScale as 100 | 125 | 150 | 175 | 200,
-        visualAcuity: localAcuity || 'Не указывать',
-      });
-      onUpdateFeeds(feedsToSave.length > 0 ? feedsToSave : ENGINEER_DEFAULT_FEEDS);
-      onUpdateTimers(localTimers.length > 0 ? localTimers : INITIAL_MEDICAL_TIMERS);
-      onChangeAppStyle(localStyle);
-      onChangeCustomWallpaper(localWallpaper);
-      onChangeCustomAiPrompt(localPrompt);
-      onChangeScheduledHours(localHours);
-      
-      // Save City and Timezone globally for whole workspace
-      if (localCity.trim()) {
-        setStoredCityAndTimeZone(localCity.trim(), localTimeZone);
-      }
-      
-      onTriggerRefresh?.(feedsToSave.length > 0 ? feedsToSave : ENGINEER_DEFAULT_FEEDS);
-
-      onPlaySound?.('success');
-      setSavedSuccess(true);
-      setTimeout(() => {
-        setSavedSuccess(false);
-        onClose();
-      }, 400);
-    } catch {
-      onClose();
-    }
-  };
-
-  // Helper for applying current form inputs to selected feed
+  
   const handleApplyFeed = () => {
-    if (!feedName.trim()) return;
-    const tags = feedHashtagsText
-      .split('\n')
-      .map(t => t.trim())
-      .filter(Boolean);
-
+    if (selectedFeedIndex < 0 || selectedFeedIndex >= localFeeds.length || !feedName.trim()) return localFeeds;
+    
+    let updated = [...localFeeds];
+    const tags = feedHashtagsText.split('\n').map(t => t.trim()).filter(Boolean);
     let generatedUrl = '';
+    
     if (feedType === 'youtube') {
       generatedUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(feedSearchQuery.trim())}`;
     } else if (feedType === 'pikabu') {
@@ -267,44 +208,69 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     } else {
       generatedUrl = feedSearchQuery.trim().startsWith('http') ? feedSearchQuery.trim() : `https://${feedSearchQuery.trim()}`;
     }
-
-    let updated = [...localFeeds];
-    if (selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length) {
-      updated[selectedFeedIndex] = {
-        ...updated[selectedFeedIndex],
-        name: feedName.trim(),
-        type: feedType,
-        searchQuery: feedSearchQuery.trim(),
-        hashtags: tags,
-        url: generatedUrl,
-        category: updated[selectedFeedIndex].category || 'Инженерия',
-      };
-      setLocalFeeds(updated);
-    } else {
-      // Add new
-      const newFeed: FeedConfig = {
-        id: `feed-${Date.now()}`,
-        name: feedName.trim(),
-        category: 'Инженерия',
-        enabled: true,
-        sources: [
-          {
-            id: `src-${Date.now()}`,
-            name: feedName.trim(),
-            type: feedType as any,
-            url: generatedUrl,
-            query: feedSearchQuery.trim(),
-            keywords: tags,
-            enabled: true
-          }
-        ]
-      };
-      updated = [...localFeeds, newFeed];
-      setLocalFeeds(updated);
-      setSelectedFeedIndex(localFeeds.length);
-    }
+    
+    const currentFeed = updated[selectedFeedIndex] as any;
+    updated[selectedFeedIndex] = {
+      ...currentFeed,
+      name: feedName.trim(),
+      title: feedName.trim(),
+      category: currentFeed.category || 'Инженерия',
+      sources: [
+        {
+          id: (currentFeed.sources && currentFeed.sources[0]?.id) || `src-${Date.now()}`,
+          name: feedName.trim(),
+          type: feedType as any,
+          url: generatedUrl,
+          query: feedSearchQuery.trim(),
+          searchQuery: feedSearchQuery.trim(),
+          keywords: tags,
+          hashtags: tags,
+          enabled: true
+        }
+      ]
+    };
+    
+    setLocalFeeds(updated);
     onPlaySound?.('click');
     return updated;
+  };
+
+  const handleSaveAll = () => {
+    try {
+      let feedsToSave = localFeeds;
+      // If the user has an active edit but hasn't clicked apply, auto-apply it:
+      if (selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length && feedName.trim()) {
+        feedsToSave = handleApplyFeed();
+      }
+      
+      onUpdateFeeds(feedsToSave.length > 0 ? feedsToSave : []);
+      onUpdateTimers(localTimers);
+      if (accessibility && onUpdateAccessibility) {
+        onUpdateAccessibility({
+          ...accessibility,
+          scalePercent: localScale,
+          visualAcuity: localAcuity
+        });
+      }
+      
+      onChangeCustomAiPrompt?.(localPrompt);
+      onChangeAppStyle?.(localStyle);
+      onChangeCustomWallpaper?.(localWallpaper);
+      onChangeScheduledHours?.(localHours);
+      
+      localStorage.setItem('belkin_weather_city', localCity);
+      localStorage.setItem('belkin_weather_tz', localTimeZone);
+      
+      setSavedSuccess(true);
+      onPlaySound?.('ping');
+      setTimeout(() => setSavedSuccess(false), 2000);
+      
+      // Trigger a refresh if they changed feeds
+      onTriggerRefresh?.(feedsToSave.length > 0 ? feedsToSave : []);
+      
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleAddNewFeed = () => {

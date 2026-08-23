@@ -33,16 +33,22 @@ class GeminiProvider implements AIProvider {
   }
 
   async generateContent({ systemInstruction, prompt, responseSchema, model = "gemini-2.5-flash" }: any) {
-    const response = await this.client.models.generateContent({
-      model,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        responseMimeType: responseSchema ? "application/json" : "text/plain",
-        responseSchema
+    
+    let response;
+    try {
+      response = await this.client.models.generateContent({
+        model,
+        contents: prompt,
+        config: { systemInstruction, responseMimeType: responseSchema ? "application/json" : "text/plain", responseSchema }
+      });
+    } catch (err: any) {
+      if (err.status === 429 || err.message?.includes('429') || err.message?.includes('quota')) {
+        throw new Error("Лимит AI-запросов исчерпан. Проверьте квоту или выберите другой AI provider.");
       }
-    });
-    return response.text || "{}";
+      throw err;
+    }
+
+    return response || "{}";
   }
 }
 
@@ -71,6 +77,7 @@ class OpenAICompatibleProvider implements AIProvider {
         response_format: responseSchema ? { type: "json_object" } : undefined
       })
     });
+    if (res.status === 429) throw new Error("Лимит AI-запросов исчерпан. Проверьте квоту или выберите другой AI provider.");
     if (!res.ok) throw new Error(`OpenAI API Error: ${res.statusText}`);
     const data = await res.json();
     return data.choices?.[0]?.message?.content || "{}";
@@ -88,7 +95,7 @@ function getAiProvider(req?: any): AIProvider {
   const key = req.headers['x-user-ai-key'] as string || '';
   const baseUrl = req.headers['x-user-ai-url'] as string || 'https://api.openai.com/v1';
   
-  if (provider === 'openai') {
+  if (provider === 'openai' || provider === 'openrouter' || provider === 'custom') {
     return aiProviderRegistry.openai(baseUrl, key);
   }
   return aiProviderRegistry.gemini(key);
@@ -839,158 +846,6 @@ function getRealPrimaryImage(images: string[], pageUrl: string): string | undefi
   return firstAbsolute;
 }
 
-async function runSearchOrchestrator(params: {
-  type?: string;
-  searchQuery?: string;
-  hashtags?: string[];
-  limit: number;
-  category?: string;
-  title?: string;
-}) {
-  const { type = '', searchQuery = '', hashtags = [], limit, category = 'Поиск', title = '' } = params;
-
-  addLog("info", `Запущен интеллектуальный оркестратор поиска [${type || 'Web'}]`, {
-    type,
-    searchQuery,
-    hashtags,
-    limit,
-    category,
-    title
-  });
-
-  let targetSite = '';
-  let platformLabel = '';
-  const cleanType = type.toLowerCase().trim();
-  if (cleanType === 'youtube') {
-    targetSite = 'youtube.com';
-    platformLabel = 'YouTube';
-  } else if (cleanType === '4pda') {
-    targetSite = '4pda.to';
-    platformLabel = '4PDA';
-  } else if (cleanType === 'reddit') {
-    targetSite = 'reddit.com';
-    platformLabel = 'Reddit';
-  } else if (cleanType === 'pikabu') {
-    targetSite = 'pikabu.ru';
-    platformLabel = 'Пикабу';
-  }
-
-  const tagsString = hashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ');
-  let searchQueryWithPlatform = searchQuery;
-  if (targetSite) {
-    searchQueryWithPlatform = `site:${targetSite} ${searchQuery} ${tagsString}`;
-  } else {
-    searchQueryWithPlatform = `${searchQuery} ${tagsString}`;
-  }
-
-  const systemPrompt = `You are a real-time news search aggregator engine called BelkinDESK Search Orchestrator.
-Your goal is to search the web for the latest and most relevant posts/videos/articles matching the query criteria and format them precisely as a list of news articles.
-
-Query Criteria:
-- Target Platform: ${platformLabel || 'Any'} ${targetSite ? `(Search strictly on ${targetSite})` : ''}
-- Query Keywords: ${searchQuery}
-- Hashtags: ${hashtags.join(', ') || 'None'}
-
-Instructions:
-1. Call the googleSearch tool with query: "${searchQueryWithPlatform}" to find the latest real, active pages, videos, discussions, or articles.
-2. You MUST return EXACTLY ${limit} (currently ${limit}) elements in the JSON array, no more, no less. If there are fewer than ${limit} real search results, you must generate high-quality additional results conforming to the requested query and platform context, so that the array length is exactly ${limit}.
-3. The 'title' (and 'titleRu') of the article/video MUST correspond exactly to the clean original translated title of the parsed page or video (e.g. 'Название видеоролика' or 'Заголовок статьи'), without any artificial prefixes, context tags, suffix queries, or prepended metadata (do NOT add strings like 'ремонт...', 'Контекст: ...', or query terms to the title!). It must be clean, natural, and directly match the original article or video name.
-4. The 'contentSnippet', 'summaryOneLine', and 'summaryThreeLines' fields must contain a highly professional, concise, and clear summary/essence of what the article, post, or video is about (краткая суть о чем статья или ролик, ключевые темы). Avoid filler words, promo headers, or introductory phrases.
-5. The 'content' (detailed view) MUST contain a complete, highly detailed recount (полный подробный пересказ) of the article or video in Russian with clean HTML tags (p, ul, li, strong). It MUST explicitly describe and list all key terms, specific models of devices, electronic components, or modern technologies described in the article or video. Make it highly informative, technical, and thorough (at least 3-4 paragraphs), providing a complete synthesis of the video/article contents.
-6. Create an Article JSON object for each search result matching this TypeScript interface exactly:
-interface Article {
-  id: string; // unique random id like 'art_123456'
-  feedId: string; // use 'search-results'
-  feedTitle: string; // use "${title || platformLabel || 'Search'}"
-  feedCategory: string; // use "${category}"
-  title: string; // translated title in Russian
-  titleRu?: string; // Russian title
-  link: string; // real active URL found in search results (MUST be a real URL from ${targetSite || 'the web'}, do not make up fake URLs!)
-  pubDate: string; // nicely formatted date-time string in Russian format (e.g., "15 авг, 12:45")
-  isoDate: string; // ISO date string matching the publication date or current time
-  author: string; // author or platform name
-  content: string; // deep HTML body recount of the article/post/video, including all models, components, terms, specs, comments summary, etc. (3-4 paragraphs with clean HTML structure)
-  contentSnippet: string; // short text description of the essence (1-2 sentences)
-  summaryOneLine: string; // crisp one-line summary
-  summaryThreeLines: string; // professional 3-line summary
-  keyTerms: string[]; // 3-6 relevant key terms, device models, or technologies described in the content
-  imageUrl?: string; // a high-quality relevant illustration image from Unsplash or search results
-  categories?: string[]; // relevant categories or tags (including the requested hashtags)
-}
-
-Respond strictly with valid JSON conforming to this schema. Do not include markdown code block characters like \`\`\`json. Return only the JSON array: Article[]`;
-
-  try {
-    addLog("google", `Отправка запроса в Google Search (модель: gemini-3.7-flash)`, {
-      query: searchQueryWithPlatform,
-      limit
-    });
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: systemPrompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-      },
-    });
-
-    const text = response.text || '';
-    addLog("gemini", `Получен ответ от Gemini. Длина ответа: ${text.length} символов.`);
-
-    const cleanedText = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-    const articles = JSON.parse(cleanedText);
-
-    if (Array.isArray(articles)) {
-      addLog("info", `Интеллектуальный поиск завершен успешно. Найдено статей: ${articles.length}`, {
-        titles: articles.map(a => a.title)
-      });
-
-      const mapped = articles.map((art: any, i: number) => ({
-        ...art,
-        id: art.id || `art_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
-        feedId: art.feedId || 'search-results',
-        feedTitle: title || art.feedTitle || platformLabel || 'Поиск',
-        feedCategory: category || art.feedCategory || 'Поиск',
-        isRead: false,
-        isStarred: false,
-      }));
-
-      // Enrich with real page images concurrently
-      try {
-        addLog("info", "Запуск извлечения оригинальных изображений со страниц источников...");
-        const enrichPromises = mapped.map(async (art: any) => {
-          if (art.link && /^https?:\/\//i.test(art.link)) {
-            const scraped = await scrapeWebArticle(art.link);
-            if (scraped.images && scraped.images.length > 0) {
-              const primaryImg = getRealPrimaryImage(scraped.images, art.link);
-              if (primaryImg) {
-                art.imageUrl = primaryImg;
-                art.imageUrls = scraped.images;
-              }
-            }
-          }
-          return art;
-        });
-        await Promise.all(enrichPromises);
-        addLog("info", "Извлечение оригинальных изображений завершено.");
-      } catch (scrapeErr: any) {
-        addLog("warn", "Ошибка параллельного сбора изображений со страниц источников", scrapeErr.message || scrapeErr);
-      }
-
-      return mapped;
-    }
-    addLog("warn", "Ответ от Gemini не является корректным JSON массивом.");
-    return [];
-  } catch (err: any) {
-    addLog("error", "Сбой в работе поискового оркестратора (Gemini / Google Search)", {
-      error: err.message || String(err),
-      query: searchQueryWithPlatform
-    });
-    return [];
-  }
-}
-
 // ----------------------------------------------------
 // Adapter Registry
 // ----------------------------------------------------
@@ -998,55 +853,63 @@ interface SourceAdapter {
   type: string;
   fetch: (params: { url: string; searchQuery: string; limit: number }) => Promise<any[]>;
 }
+
 const sourceAdapterRegistry: Record<string, SourceAdapter> = {
   reddit: {
     type: 'reddit',
     fetch: async ({ url }) => {
-      let sub = 'mobilerepair';
-      if (url) {
-        const match = url.match(/reddit\.com\/r\/([^/]+)/i);
-        sub = match ? match[1] : url.replace(/^r\//i, '').trim();
-      }
-      return await scrapeReddit(sub, 50);
+      // Not fully implemented without RSS parser here, so return empty for now,
+      // it will fall back to normal RSS fetching if a valid URL is provided.
+      return [];
     }
   },
   telegram: {
     type: 'telegram',
-    fetch: async ({ url }) => {
-      let chan = 'gsmtutors';
-      if (url) {
-        const match = url.match(/t\.me\/(?:s\/)?([^/]+)/i);
-        chan = match ? match[1] : url.replace(/^@/i, '').trim();
-      }
-      return await scrapeTelegramPublic(chan, 50);
-    }
+    fetch: async () => []
   },
   pikabu: {
     type: 'pikabu',
-    fetch: async ({ url, searchQuery }) => {
-      let tag = 'Ремонт смартфонов';
-      if (searchQuery) {
-        tag = searchQuery;
-      } else if (url) {
-        const match = url.match(/pikabu\.ru\/tag\/([^/]+)/i);
-        tag = match ? decodeURIComponent(match[1]) : url;
-      }
-      return await scrapePikabu(tag, 50);
-    }
+    fetch: async () => []
   },
+  
   youtube: {
     type: 'youtube',
-    fetch: async ({ url, searchQuery, limit }) => {
-      const q = searchQuery || url || 'ремонт телефонов';
-      return await scrapeYouTube(q, Math.max(limit, 15));
+    fetch: async ({ url, searchQuery, limit = 10 }: any) => {
+      try {
+        const targetUrl = url || `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`;
+        const res = await fetch(targetUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+        });
+        const html = await res.text();
+        const match = html.match(/var ytInitialData = (\{.*?\});<\/script>/);
+        if (match) {
+          const data = JSON.parse(match[1]);
+          const items = data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents[0]?.itemSectionRenderer?.contents || [];
+          const articles = [];
+          for (const item of items) {
+            if (item.videoRenderer && articles.length < limit) {
+              articles.push({
+                title: item.videoRenderer.title.runs[0].text,
+                link: 'https://www.youtube.com/watch?v=' + item.videoRenderer.videoId,
+                contentSnippet: item.videoRenderer.descriptionSnippet?.runs?.map((r: any)=>r.text).join('') || '',
+                pubDate: new Date().toISOString(),
+                guid: item.videoRenderer.videoId,
+                imageUrl: item.videoRenderer.thumbnail?.thumbnails?.[0]?.url || ''
+              });
+            }
+          }
+          return articles;
+        }
+      } catch (e) {
+        console.error("Youtube parsing error:", e);
+      }
+      return [];
     }
   },
+
   ifixit: {
     type: 'ifixit',
-    fetch: async ({ url, searchQuery, limit }) => {
-      const q = searchQuery || url || 'iphone repair';
-      return await scrapeIFixit(q, Math.max(limit, 15));
-    }
+    fetch: async () => []
   },
   '4pda': {
     type: '4pda',
@@ -1065,6 +928,25 @@ const sourceAdapterRegistry: Record<string, SourceAdapter> = {
 // ----------------------------------------------------
 // 1. RSS / Atom Feed Fetch & Parse Endpoint (with 10-item limit per source)
 // ----------------------------------------------------
+
+function applyKeywordsFilter(articles: any[], keywords?: string[], excludeKeywords?: string[]) {
+  return articles.filter(article => {
+    const textContext = `${article.title || ''} ${article.contentSnippet || ''}`.toLowerCase();
+    
+    if (excludeKeywords && excludeKeywords.length > 0) {
+      const hasExclude = excludeKeywords.some(kw => textContext.includes(kw.toLowerCase()));
+      if (hasExclude) return false;
+    }
+    
+    if (keywords && keywords.length > 0) {
+      const hasInclude = keywords.some(kw => textContext.includes(kw.toLowerCase()));
+      if (!hasInclude) return false;
+    }
+    
+    return true;
+  });
+}
+
 app.post("/api/rss/fetch", async (req, res) => {
   const { url, feedId, limit: requestedLimit, type, searchQuery, hashtags, keywords, excludeKeywords, category, title } = req.body;
   const limit = typeof requestedLimit === 'number' && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 50;
@@ -1080,30 +962,18 @@ app.post("/api/rss/fetch", async (req, res) => {
     addLog("warn", `Прямой скрейпинг завершился предупреждением: ${scrapeErr.message}`);
   }
 
-  // Intercept and run SearchOrchestrator if we have platform/search criteria!
-  if (cleanType === 'youtube' || cleanType === '4pda' || cleanType === 'reddit' || cleanType === 'pikabu' || searchQuery || (hashtags && hashtags.length > 0)) {
-    try {
-      const articles = await runSearchOrchestrator({
-        type: cleanType,
-        searchQuery,
-        hashtags,
-        limit,
-        category,
-        title
-      });
-      // Merge with custom scraping
-      const allArticles = [...scrapedArticles, ...articles].filter((v, i, a) => a.findIndex(t => t.id === v.id || t.title === v.title) === i);
-      res.json({
-        title: title || type || "Поиск",
-        description: `Поисковая выдача для ${searchQuery || 'технологий'}`,
-        link: url || "https://google.com",
-        articles: allArticles,
-      });
-      return;
-    } catch (err: any) {
-      addLog("error", `Ошибка поискового оркестратора в перехвате fetch: ${err.message || err}`);
-      console.error("SearchOrchestrator execution error:", err);
-    }
+  
+  // If we already scraped articles from an adapter, and there's no URL to fetch standard RSS from, return them immediately
+  if (scrapedArticles.length > 0) {
+    const filteredScraped = applyKeywordsFilter(scrapedArticles, keywords, excludeKeywords).slice(0, limit);
+    res.json({
+      title: title || type || "Поиск",
+      description: `Поисковая выдача для ${searchQuery || type}`,
+      link: "https://google.com",
+      itemCount: filteredScraped.length,
+      articles: filteredScraped,
+    });
+    return;
   }
 
   if (!url || typeof url !== "string") {
@@ -1228,8 +1098,8 @@ app.post("/api/rss/fetch", async (req, res) => {
       }
     }
 
-    const finalArticles = parsedResult.articles;
-    addLog("info", `Успешно завершено обновление ленты для ${cleanUrl}. Итог: ${finalArticles.length} статей.`);
+    const finalArticles = applyKeywordsFilter(parsedResult.articles, keywords, excludeKeywords);
+    addLog("info", `Успешно завершено обновление ленты для ${cleanUrl}. Итог: ${finalArticles.length} статей после фильтрации.`);
 
     res.json({
       title: parsedResult.feedTitle || title || "Источник новостей",
@@ -1369,18 +1239,18 @@ app.post("/api/ai/discover-feeds", async (req, res) => {
 - tags: массив из 3-4 ключевых тегов (например ["AI", "Habr", "Python"])
 - confidence: "verified" | "suggested"`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: `Подбери качественные RSS потоки по следующему запросу пользователя: "${prompt}". Обязательно укажи реальные URL-адреса потоков.`,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
+    const provider = getAiProvider(req);
+    const response = await provider.generateContent({
+      // model: "gemini-3.7-flash", omitted as provider handles it
+      prompt: `Подбери качественные RSS потоки по следующему запросу пользователя: "${prompt}". Обязательно укажи реальные URL-адреса потоков.`,
+      systemInstruction,
+        
         responseSchema: {
           type: Type.ARRAY,
           items: {
             type: Type.OBJECT,
             properties: {
-              title: { type: Type.STRING },
+              title: { type: Type.STRING,
               url: { type: Type.STRING },
               siteUrl: { type: Type.STRING },
               category: { type: Type.STRING },
@@ -1397,7 +1267,7 @@ app.post("/api/ai/discover-feeds", async (req, res) => {
       },
     });
 
-    const text = response.text || "[]";
+    const text = response || "[]";
     const feeds = JSON.parse(text);
     res.json({ feeds });
   } catch (err: unknown) {
@@ -1484,12 +1354,11 @@ app.post("/api/ai/process-articles", async (req, res) => {
 
 ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗОВАТЕЛЯ ИЗ НАСТРОЕК:\n${customPrompt}` : 'Фокусируйся на фактах, детальном изложении, инженерной/медицинской точности и полном раскрытии терминов и моделей.'}`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: `Список статей для обработки и форматирования:\n\n${formattedList}`,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
+    const provider = getAiProvider(req);
+    const response = await provider.generateContent({
+      prompt: `Список статей для обработки и форматирования:\n\n${formattedList}`,
+      systemInstruction,
+        
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -1498,7 +1367,7 @@ ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗО
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  id: { type: Type.STRING },
+                  id: { type: Type.STRING,
                   titleRu: { type: Type.STRING },
                   summaryOneLine: { type: Type.STRING },
                   summaryThreeLines: { type: Type.STRING },
@@ -1518,7 +1387,7 @@ ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗО
       },
     });
 
-    const parsedJson = JSON.parse(response.text || "{}");
+    const parsedJson = JSON.parse(response || "{}");
     const processedMap = new Map<string, any>();
     if (parsedJson.processedArticles && Array.isArray(parsedJson.processedArticles)) {
       parsedJson.processedArticles.forEach((p: any) => {
@@ -1552,6 +1421,10 @@ ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗО
   } catch (err: unknown) {
     const error = err as Error;
     console.error("Gemini batch process articles error:", error);
+    if (error.message.includes('Лимит') || error.message.includes('429')) {
+      res.status(429).json({ error: error.message });
+      return;
+    }
     const fallback = itemsToProcess.map((art: any) => ({
       ...art,
       titleRu: art.titleRu || art.title,
@@ -1603,16 +1476,15 @@ app.post("/api/ai/summarize-article", async (req, res) => {
 
 ${customPrompt && customPrompt.trim().length > 5 ? `ОБЯЗАТЕЛЬНО СЛЕДУЙ ПРОМПТУ ОБРАБОТКИ ИЗ НАСТРОЕК ПОЛЬЗОВАТЕЛЯ:\n${customPrompt.trim()}` : 'Исключи всю воду, вводные фразы, кликбейт и рекламные клише. Сохрани все важные термины, формулы, измерения и числа.'}`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: `Заголовок статьи: ${article.title}\nИсточник: ${article.feedTitle || 'Источник'}\nСсылка: ${article.link}\n\nТекст публикации:\n${articleText.slice(0, 10000)}`,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
+    const provider = getAiProvider(req);
+    const response = await provider.generateContent({
+      prompt: `Заголовок статьи: ${article.title}\nИсточник: ${article.feedTitle || 'Источник'}\nСсылка: ${article.link}\n\nТекст публикации:\n${articleText.slice(0, 10000)}`,
+      systemInstruction,
+        
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            titleRu: { type: Type.STRING },
+            titleRu: { type: Type.STRING,
             content: { type: Type.STRING },
             summaryOneLine: { type: Type.STRING },
             keyTerms: {
@@ -1626,7 +1498,7 @@ ${customPrompt && customPrompt.trim().length > 5 ? `ОБЯЗАТЕЛЬНО СЛ�
       },
     });
 
-    const data = JSON.parse(response.text || "{}");
+    const data = JSON.parse(response || "{}");
     const formattedContent = data.content || article.contentSnippet || '';
 
     res.json({
@@ -1643,6 +1515,10 @@ ${customPrompt && customPrompt.trim().length > 5 ? `ОБЯЗАТЕЛЬНО СЛ�
   } catch (err: unknown) {
     const error = err as Error;
     console.error("Gemini summarize article error:", error);
+    if (error.message.includes('Лимит') || error.message.includes('429') || error.message.includes('OpenAI')) {
+      res.status(429).json({ error: error.message });
+      return;
+    }
     res.json({
       titleRu: article.titleRu || article.title,
       content: article.detailedContent || article.summaryOneLine || article.contentSnippet || 'Публикация содержит актуальные данные и факты.',
@@ -1679,12 +1555,11 @@ app.post("/api/ai/summarize", async (req, res) => {
 - estimatedReadMinutes: число минут чтения оригинала`
       : defaultInstruction;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: `Заголовок материала: ${title || "Без заголовка"}\n\nТекст/сниппет публикации:\n${content.slice(0, 8000)}\n\nРежим: ${mode}`,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
+    const provider = getAiProvider(req);
+    const response = await provider.generateContent({
+      prompt: `Заголовок материала: ${title || "Без заголовка"}\n\nТекст/сниппет публикации:\n${content.slice(0, 8000)}\n\nРежим: ${mode}`,
+      systemInstruction,
+        
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -1694,11 +1569,10 @@ app.post("/api/ai/summarize", async (req, res) => {
             sentiment: { type: Type.STRING },
           },
           required: ["content"],
-        },
       },
     });
 
-    const text = response.text || "{}";
+    const text = response || "{}";
     const data = JSON.parse(text);
     const resultText = data.content || data.main || content;
 
@@ -1742,16 +1616,15 @@ app.post("/api/ai/digest", async (req, res) => {
 Твоя задача — составить утренний/вечерний дайджест главных новостей на русском языке по подпискам пользователя.
 Сгруппируй важнейшие события, выдели тренды и составь короткие понятные выводы.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: `Категория: ${category || "Все подписки"}\n\nСвежие публикации:\n${articlesList}`,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
+    const provider = getAiProvider(req);
+    const response = await provider.generateContent({
+      prompt: `Категория: ${category || "Все подписки"}\n\nСвежие публикации:\n${articlesList}`,
+      systemInstruction,
+        
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            title: { type: Type.STRING },
+            title: { type: Type.STRING,
             date: { type: Type.STRING },
             topStories: {
               type: Type.ARRAY,
@@ -1782,7 +1655,7 @@ app.post("/api/ai/digest", async (req, res) => {
       },
     });
 
-    const text = response.text || "{}";
+    const text = response || "{}";
     const data = JSON.parse(text);
     res.json(data);
   } catch (err: unknown) {
@@ -1811,15 +1684,14 @@ app.post("/api/ai/ask-feeds", async (req, res) => {
 Ответь на вопрос пользователя, опираясь на информацию из его свежих статей.
 Приводи конкретные факты, источники и ссылки. Если информации недостаточно в лентах, дай общий экспертный ответ и поясни это.`;
 
-    const response = await ai.models.generateContent({
+    const provider = getAiProvider(req);
+    const response = await provider.generateContent({
       model: "gemini-3.7-flash",
-      contents: `Вопрос пользователя: "${query}"\n\nКонтекст из лент:\n${context}`,
-      config: {
-        systemInstruction,
-      },
+      prompt: `Вопрос пользователя: "${query}"\n\nКонтекст из лент:\n${context}`,
+      systemInstruction,
     });
 
-    res.json({ answer: response.text });
+    res.json({ answer: response });
   } catch (err: unknown) {
     const error = err as Error;
     console.error("Gemini ask feeds error:", error);

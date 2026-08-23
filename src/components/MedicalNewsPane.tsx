@@ -551,7 +551,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
 
             {filteredArticles.length === 0 && (
               <div className="text-center py-16 text-slate-500 text-xs font-mono">
-                {isStarredFilter ? 'Нет избранных новостей' : 'Новости не найдены'}
+                {isStarredFilter ? 'Нет избранных новостей' : 'По заданным источникам и фильтрам ничего не найдено.'}
               </div>
             )}
           </div>

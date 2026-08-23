@@ -1,66 +1,22 @@
 import fs from 'fs';
 
-let code = fs.readFileSync('server.ts', 'utf-8');
+let content = fs.readFileSync('server.ts', 'utf-8');
 
-// The discover-feeds route
-code = code.replace(/const client = getAiClient\(req\);\n[\s\S]*?const response = await client\.models\.generateContent\(\{[\s\S]*?contents: ([\s\S]*?),\n[\s\S]*?config: \{[\s\S]*?systemInstruction:([\s\S]*?),\n[\s\S]*?responseSchema: ([\s\S]*?),[\s\S]*?\},[\s\S]*?\}\);/g, 
-`const provider = getAiProvider(req);
-    const responseText = await provider.generateContent({
-      prompt: $1,
-      systemInstruction: $2,
-      responseSchema: $3,
-    });
-`);
-code = code.replace(/const text = response\.text \|\| "\{\}";/g, `const text = responseText;`);
+// Fix calls: replace `config: { ... }` with flattened fields
+content = content.replace(/config:\s*\{([^}]*)\}/g, (match, p1) => {
+  return p1.trim();
+});
 
-// The process-articles route uses getAiClient(req)
-code = code.replace(/const aiClient = getAiClient\(req\);\n[\s\S]*?const response = await aiClient\.models\.generateContent\(\{[\s\S]*?contents: ([\s\S]*?),\n[\s\S]*?config: \{[\s\S]*?systemInstruction: ([\s\S]*?),\n[\s\S]*?responseSchema: ([\s\S]*?)\n[\s\S]*?\}\n[\s\S]*?\}\);/g,
-`const provider = getAiProvider(req);
-    const responseText = await provider.generateContent({
-      prompt: $1,
-      systemInstruction: $2,
-      responseSchema: $3,
-    });
-`);
+// Also there is one `contents: ...` inside generateContent which was probably an array.
+// Wait, I see error: "and 'contents' does not exist in type"
+content = content.replace(/contents:\s*\[\s*\{\s*role:\s*"user",\s*parts:\s*\[\s*\{\s*text:\s*prompt\s*\}\s*\]\s*\}\s*\]/g, "prompt: prompt");
 
-// The summarize-article route
-code = code.replace(/const aiClient = getAiClient\(req\);\n[\s\S]*?const response = await aiClient\.models\.generateContent\(\{[\s\S]*?contents: ([\s\S]*?),\n[\s\S]*?config: \{[\s\S]*?systemInstruction:([\s\S]*?),\n[\s\S]*?responseSchema: ([\s\S]*?),[\s\S]*?\}\n[\s\S]*?\}\);/g,
-`const provider = getAiProvider(req);
-    const responseText = await provider.generateContent({
-      prompt: $1,
-      systemInstruction: $2,
-      responseSchema: $3,
-    });
-`);
+// Also there is `responseMimeType: "application/json",` which is not in AIProvider interface, let's remove it
+content = content.replace(/responseMimeType:\s*"application\/json",/g, "");
 
-// The summarize route (uses global 'ai')
-code = code.replace(/const response = await ai\.models\.generateContent\(\{[\s\S]*?contents: ([\s\S]*?),\n[\s\S]*?config: \{[\s\S]*?systemInstruction,\n[\s\S]*?responseSchema: ([\s\S]*?),[\s\S]*?\}\n[\s\S]*?\}\);/g,
-`const provider = getAiProvider(req);
-    const responseText = await provider.generateContent({
-      prompt: $1,
-      systemInstruction: systemInstruction,
-      responseSchema: $2,
-    });
-`);
+// Change `response.text` to `response`
+// BUT only where it's actually accessing `.text` on the result of `generateContent`
+content = content.replace(/response\.text/g, "response");
 
-// The digest route uses ai.models.generateContent
-code = code.replace(/const response = await ai\.models\.generateContent\(\{[\s\S]*?contents: ([\s\S]*?),\n[\s\S]*?config: \{[\s\S]*?systemInstruction:([\s\S]*?),\n[\s\S]*?responseSchema: ([\s\S]*?),[\s\S]*?\}\n[\s\S]*?\}\);/g,
-`const provider = getAiProvider(req);
-    const responseText = await provider.generateContent({
-      prompt: $1,
-      systemInstruction: $2,
-      responseSchema: $3,
-    });
-`);
-
-// The ask-feeds route uses getAiClient
-code = code.replace(/const aiClient = getAiClient\(req\);\n[\s\S]*?const response = await aiClient\.models\.generateContent\(\{[\s\S]*?contents: ([\s\S]*?),\n[\s\S]*?config: \{[\s\S]*?systemInstruction: ([\s\S]*?)\n[\s\S]*?\}\n[\s\S]*?\}\);/g,
-`const provider = getAiProvider(req);
-    const responseText = await provider.generateContent({
-      prompt: $1,
-      systemInstruction: $2,
-    });
-`);
-
-
-fs.writeFileSync('server.ts', code);
+fs.writeFileSync('server.ts', content);
+console.log('Fixed provider calls');

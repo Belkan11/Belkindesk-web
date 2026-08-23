@@ -95,6 +95,10 @@ export async function aiProcessArticles(articles: Article[], customPrompt?: stri
       body: JSON.stringify({ articles, customPrompt }),
     });
     if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 429 || (data.error && data.error.includes('Лимит'))) {
+        alert(data.error || "Лимит AI-запросов исчерпан. Проверьте квоту или выберите другой AI provider.");
+      }
       return articles;
     }
     const data = await res.json();
@@ -113,7 +117,8 @@ export async function aiSummarizeArticleDeep(article: Article, customPrompt?: st
       body: JSON.stringify({ article, customPrompt }),
     });
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
     }
     return await res.json();
   } catch (err) {
