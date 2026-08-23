@@ -58,200 +58,73 @@ async function translateToRussian(text: string): Promise<string> {
   return text;
 }
 
-async function generateAutonomousCard(article: { title: string; content?: string; contentSnippet?: string; feedTitle?: string; link?: string }) {
-  const rawTitle = stripHtml(article.title || '').trim();
-  const rawText = stripHtml(article.content || article.contentSnippet || rawTitle || '').trim();
+async function buildArticleCard(article: { title: string; content?: string; contentSnippet?: string; feedTitle?: string; link?: string; imageUrl?: string; imageUrls?: string[] }) {
+  const originalTitle = stripHtml(article.title || '').replace(/\s+/g, ' ').trim();
+  let rawContent = stripHtml(article.content || '').replace(/\s+/g, ' ').trim();
+  const snippet = stripHtml(article.contentSnippet || '').replace(/\s+/g, ' ').trim();
+  let images = Array.isArray(article.imageUrls) ? [...article.imageUrls] : [];
+  if (article.imageUrl && !images.includes(article.imageUrl)) images.unshift(article.imageUrl);
 
-  const titleRu = await translateToRussian(rawTitle);
-  const textRu = await translateToRussian(rawText);
-
-  const cleanTextRu = stripHtml(textRu).replace(/\s+/g, ' ').trim();
-  const sentences = cleanTextRu.split(/(?<=[.!?])\s+/).filter(Boolean);
-  const summaryOneLine = sentences[0] || titleRu || 'Публикация новостного источника';
-  const summaryThreeLines = sentences.slice(0, 3).join(' ') || summaryOneLine;
-
-  const words = titleRu.split(/\s+/);
-  const extractedTerms = words.filter(w => w.length > 4 && /^[А-ЯA-Z]/u.test(w)).slice(0, 5);
-  const keyTerms = extractedTerms.length > 0 ? extractedTerms : ['Новости', 'Технологии', 'Аналитика', 'Обзор'];
-
-  const detailedContent = `${titleRu}\n\n${cleanTextRu || summaryThreeLines}\n\n[Источник: ${article.feedTitle || 'RSS'}]`;
-
-  const lower = (cleanTextRu + " " + titleRu).toLowerCase();
-  let symptom = '';
-  let diagnosis = '';
-  let solution = '';
-
-  if (lower.includes('ошибка') || lower.includes('дефект') || lower.includes('сбой') || lower.includes('проблем') || lower.includes('error') || lower.includes('fail') || lower.includes('forbidden') || lower.includes('403') || lower.includes('404')) {
-    symptom = 'Зафиксировано сообщение об отклонении в работе, сетевом сбое или ошибке источника.';
-    diagnosis = 'Проведена автономная проверка доступности и логирование статуса.';
-    solution = 'Рекомендуется повторный опрос источника или использование альтернативного зеркала.';
+  // Normal feed formation is strictly non-AI. If RSS has only a short description, read the real article page.
+  if (article.link && /^https?:\/\//i.test(article.link) && rawContent.length < 500) {
+    try {
+      const scraped = await scrapeWebArticle(article.link);
+      if (scraped.text && scraped.text.length > rawContent.length) rawContent = stripHtml(scraped.text).replace(/\s+/g, ' ').trim();
+      for (const image of scraped.images || []) if (!images.includes(image)) images.push(image);
+    } catch (err) {
+      console.warn(`Article enrichment failed for ${article.link}:`, err);
+    }
   }
+
+  const cleanContent = rawContent || snippet || '';
+  const sentences = cleanContent.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const summaryOneLine = sentences[0] || snippet || originalTitle || 'Публикация новостного источника';
+  const summaryThreeLines = sentences.slice(0, 3).join(' ') || summaryOneLine;
+  const keyTerms = originalTitle.split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}_-]/gu, '')).filter(w => w.length >= 5).slice(0, 6);
 
   return {
     ...article,
-    titleRu,
-    summaryOneLine,
-    summaryThreeLines,
-    detailedContent,
-    content: detailedContent,
-    contentSnippet: summaryOneLine,
-    keyTerms,
-    estimatedReadMinutes: Math.max(1, Math.ceil(cleanTextRu.split(/\s+/).length / 160)),
+    titleRu: originalTitle,
+    summaryOneLine: summaryOneLine.slice(0, 500),
+    summaryThreeLines: summaryThreeLines.slice(0, 1200),
+    detailedContent: cleanContent || originalTitle,
+    content: rawContent || article.content || snippet || originalTitle,
+    contentSnippet: snippet || summaryOneLine.slice(0, 300),
+    imageUrl: images[0] || article.imageUrl,
+    imageUrls: images,
+    keyTerms: keyTerms.length ? keyTerms : [],
+    estimatedReadMinutes: Math.max(1, Math.ceil(cleanContent.split(/\s+/).filter(Boolean).length / 180)),
     sentiment: 'analytical',
-    symptom,
-    diagnosis,
-    solution,
+    symptom: '',
+    diagnosis: '',
+    solution: '',
   };
 }
 
-function generateSmartFeedFallbackArticles(feedTitle: string, feedUrl: string, count = 6) {
-  const lowerTitle = (feedTitle || '').toLowerCase();
-  let pool = [
-    {
-      title: 'Практическое руководство по диагностике и ремонту силовой электроники',
-      content: 'Подробный разбор типичных неисправностей импульсных блоков питания, методика проверки силовых ключей, диодов Шоттки и фильтрующих конденсаторов с использованием осциллографа и мультиметра.',
-      tags: ['Ремонт', 'Диагностика', 'Питание']
-    },
-    {
-      title: 'Современные технологии микропайки и демонтажа BGA компонентов',
-      content: 'Особенности работы с термовоздушными и инфракрасными паяльными станциями, подбор температурных профилей для бессвинцового припоя, флюсов и трафаретов для реболлинга.',
-      tags: ['Пайка', 'BGA', 'Микросхемы']
-    },
-    {
-      title: 'Обзор измерительных приборов для радиолюбительской мастерской',
-      content: 'Сравнение характеристик цифровых осциллографов начального уровня, лабораторных блоков питания с регулировкой тока и портативных измерителей ESR электролитических конденсаторов.',
-      tags: ['Приборы', 'Измерения', 'Лаборатория']
-    },
-    {
-      title: 'Типичные дефекты материнских плат и методы их локализации',
-      content: 'Алгоритм поиска короткого замыкания по линиям питания с помощью лабораторного блока питания и тепловизора, проверка дежурных напряжений и сигналов Power Good.',
-      tags: ['Материнские платы', 'КЗ', 'Ремонт']
-    },
-    {
-      title: 'Организация рабочего места инженера-электронщика',
-      content: 'Требования к антистатической защите (ESD), освещению рабочей зоны, вентиляции при пайке и правильному хранению радиодеталей и компонентов.',
-      tags: ['Мастерская', 'ESD', 'Инструмент']
-    },
-    {
-      title: 'Анализ новинок элементной базы и микроконтроллеров',
-      content: 'Обзор современных 32-битных микроконтроллеров, отладочных плат и периферийных интерфейсов для разработки встраиваемых систем управления.',
-      tags: ['МК', 'STM32', 'Компоненты']
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  const worker = async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await mapper(items[index], index);
     }
-  ];
+  };
 
-  if (lowerTitle.includes('chipdip') || lowerTitle.includes('чипдип')) {
-    pool = [
-      {
-        title: 'Новые поступления измерительных приборов и мультиметров True RMS',
-        content: 'В каталоге появились современные цифровые мультиметры с функцией измерения истинного среднеквадратичного значения, бесконтактного детектирования напряжения и защитой от перегрузки.',
-        tags: ['ЧипДип', 'Приборы', 'Мультиметр']
-      },
-      {
-        title: 'Выбор паяльной станции с индукционным нагревом жало',
-        content: 'Преимущества высокочастотного индукционного нагрева по сравнению с классическими керамическими нагревателями: стабильность температуры при интенсивной пайке.',
-        tags: ['Паяльник', 'Индукция', 'Инструмент']
-      },
-      {
-        title: 'Ассортимент силовых транзисторов и диодов для силовой электроники',
-        content: 'Обзор популярных MOSFET и IGBT транзисторов в корпусах TO-220 и D2PAK для ремонта сварочных инверторов и мощных источников питания.',
-        tags: ['Транзисторы', 'Силовая', 'Компоненты']
-      },
-      {
-        title: 'Широкий выбор макетных плат и проводников для прототипирования',
-        content: 'Как правильно выбирать беспаечные макетные платы и соединительные провода для быстрой сборки и тестирования электронных схем перед разводкой печатной платы.',
-        tags: ['Макет', 'Прототип', 'Плата']
-      },
-      {
-        title: 'Новые каталоги и справочные материалы по электронным компонентам',
-        content: 'Обновленная техническая документация и даташиты на микросхемы, датчики и оптоэлектрику в ассортименте интернет-магазина.',
-        tags: ['Даташит', 'Справочник', 'Каталог']
-      },
-      {
-        title: 'Инструменты для точной механики и разборки корпусов гаджетов',
-        content: 'Наборы прецизионных отверток, медиаторов, присосок и гибких валов для безопасного вскрытия смартфонов, планшетов и ноутбуков без повреждения защелок.',
-        tags: ['Инструмент', 'Разборка', 'Ремонт']
-      }
-    ];
-  } else if (lowerTitle.includes('ixbt')) {
-    pool = [
-      {
-        title: 'Тест производительности новых видеокарт в современных играх и трассировке лучей',
-        content: 'Подробное тестирование графических ускорителей в разрешениях 1080p, 1440p и 4K, замеры энергопотребления, температурного режима и уровня шума системы охлаждения.',
-        tags: ['IXBT', 'Видеокарты', 'Тест']
-      },
-      {
-        title: 'Обзор производительных SSD накопителей с интерфейсом PCIe 4.0 и 5.0',
-        content: 'Сравнение скоростей линейного чтения и записи, работы с большими файлами и температурных показателей флагманских твердотельных накопителей.',
-        tags: ['SSD', 'Накопитель', 'Железо']
-      },
-      {
-        title: 'Выбор материнской платы для игрового ПК на базе актуальных чипсетов',
-        content: 'Анализ подсистем питания (VRM), эффективности радиаторов, наличия слотов M.2 и портов ввода-вывода в различных ценовых категориях.',
-        tags: ['Материнская плата', 'VRM', 'ПК']
-      },
-      {
-        title: 'Сравнение эффективности воздушных кулеров и систем жидкостного охлаждения',
-        content: 'Тестирование процессорных кулеров в условиях максимальной нагрузки и разгона, оценка акустического комфорта и простоты установки.',
-        tags: ['Охлаждение', 'ЦП', 'Тест']
-      },
-      {
-        title: 'Обзор портативных игровых консолей нового поколения',
-        content: 'Эргономика, автономность работы от аккумулятора, производительность в портативном режиме и качество дисплеев мобильных игровых устройств.',
-        tags: ['Консоль', 'Портатив', 'Обзор']
-      },
-      {
-        title: 'Тенденции рынка процессоров и оперативной памяти DDR5',
-        content: 'Анализ изменения цен, частотных характеристик памяти и новых архитектурных решений ведущих производителей полупроводников.',
-        tags: ['Процессор', 'DDR5', 'Аналитика']
-      }
-    ];
-  } else if (lowerTitle.includes('4pda') || lowerTitle.includes('android')) {
-    pool = [
-      {
-        title: 'Инструкция по восстановлению кирпича после неудачной прошивки',
-        content: 'Пошаговый алгоритм раскирпичивания смартфонов через специализированные утилиты восстановления, EDL-режим и тестовые точки (Test Point) на плате.',
-        tags: ['4PDA', 'Прошивка', 'Восстановление']
-      },
-      {
-        title: 'Диагностика и замена неисправных микросхем памяти (NAND / UFS)',
-        content: 'Симптомы выхода из строя флеш-памяти в мобильных устройствах, чтение дампов, программаторы и процедура замены микросхем с переносом данных.',
-        tags: ['NAND', 'UFS', 'Ремонт']
-      },
-      {
-        title: 'Устранение проблем с быстрым разрядом аккумулятора в Android',
-        content: 'Анализ глубокого сна процессора, поиск зависших процессов через batterystats, замена изношенных литий-ионных аккумуляторов и калибровка контроллера заряда.',
-        tags: ['Аккумулятор', 'Android', 'Энергия']
-      },
-      {
-        title: 'Восстановление шлейфов дисплеев и тачскринов после залития',
-        content: 'Очистка окислений в ультразвуковой ванне, восстановление оборванных проводников токопроводящим клеем и проверка напряжений подсветки экрана.',
-        tags: ['Дисплей', 'Шлейф', 'Ремонт']
-      },
-      {
-        title: 'Обзор актуальных утилит для разблокировки загрузчика и получения Root',
-        content: 'Безопасные методы установки кастомных рекавери (TWRP), модификации ядра и настройки системных разделов на смартфонах различных брендов.',
-        tags: ['Root', 'TWRP', 'Инструкция']
-      },
-      {
-        title: 'Диагностика цепей питания и контроллера заряда (Tristar / U2 / PMIC)',
-        content: 'Как определить пробой по шине USB, проверить потребление тока подключенного телефона и заменить микросхему питания без перегрева платы.',
-        tags: ['PMIC', 'Питание', 'Зарядка']
-      }
-    ];
-  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, items.length) },
+      () => worker()
+    )
+  );
 
-  return pool.slice(0, count).map((item, idx) => ({
-    id: `art_smart_fb_${Date.now()}_${idx}`,
-    feedId: feedUrl,
-    feedTitle: feedTitle || 'Источник',
-    title: item.title,
-    link: feedUrl,
-    pubDate: 'Сегодня',
-    isoDate: new Date().toISOString(),
-    author: feedTitle || 'Автономный монитор',
-    content: item.content,
-    contentSnippet: item.content.slice(0, 120) + '...',
-  }));
+  return results;
 }
 
 // Setup XML Parser with entity decoding
@@ -1767,28 +1640,14 @@ app.post("/api/rss/fetch", async (req, res) => {
       const q = searchQuery || url || 'iphone repair';
       scrapedArticles = await scrapeIFixit(q, Math.max(limit, 15));
     } else if (cleanType === '4pda' || cleanType === 'rss' || cleanType === 'atom') {
-      // Direct robust fallback pool for 4PDA and RSS to guarantee rich content
-      scrapedArticles = generateSmartFeedFallbackArticles(title || searchQuery || cleanType || 'Лента', url || '', Math.max(limit, 15));
+      scrapedArticles = [];
     }
   } catch (scrapeErr: any) {
     addLog("warn", `Прямой скрейпинг завершился предупреждением: ${scrapeErr.message}`);
   }
 
-  // Ensure we always have at least 15 rich articles per source
-  if (!scrapedArticles || scrapedArticles.length < 10) {
-    const fallbacks = generateSmartFeedFallbackArticles(title || searchQuery || 'Лента', url || '', 15);
-    // Combine existing scraped with fallbacks without duplicates
-    const existingTitles = new Set((scrapedArticles || []).map(a => (a.title || '').toLowerCase().trim()));
-    for (const f of fallbacks) {
-      if (!existingTitles.has((f.title || '').toLowerCase().trim())) {
-        scrapedArticles.push(f);
-        existingTitles.add((f.title || '').toLowerCase().trim());
-      }
-    }
-  }
-
   if (scrapedArticles && scrapedArticles.length > 0) {
-    addLog("info", `Обработка ${scrapedArticles.length} статей автономным алгоритмом...`);
+    addLog("info", `Обработка ${scrapedArticles.length} статей локальным алгоритмом...`);
     const userTags = Array.isArray(hashtags) && hashtags.length > 0 ? hashtags : ['Новости', 'Технологии', 'Обзор'];
     
     // Deduplicate scrapedArticles by link or id or title
@@ -1805,9 +1664,11 @@ app.post("/api/rss/fetch", async (req, res) => {
       return true;
     });
 
-    const processedArticles = await Promise.all(
-      uniqueScraped.slice(0, limit).map(async (art: any) => {
-        const enhanced = await generateAutonomousCard(art);
+    const processedArticles = await mapWithConcurrency(
+      uniqueScraped.slice(0, limit),
+      4,
+      async (art: any) => {
+        const enhanced = await buildArticleCard(art);
         const itemTags = Array.isArray(art.categories) && art.categories.length > 0 ? art.categories : userTags;
         return {
           ...art,
@@ -1821,7 +1682,7 @@ app.post("/api/rss/fetch", async (req, res) => {
           isRead: false,
           isStarred: false,
         };
-      })
+      }
     );
 
     res.json({
@@ -1937,10 +1798,12 @@ app.post("/api/rss/fetch", async (req, res) => {
       });
     }
 
-    // Process all articles with non-AI autonomous card generator and Google Translate
-    const finalArticles = await Promise.all(
-      sourceArticles.slice(0, limit).map(async (art: any) => {
-        const enhanced = await generateAutonomousCard(art);
+    // Process all articles with buildArticleCard and concurrency 4
+    const finalArticles = await mapWithConcurrency(
+      sourceArticles.slice(0, limit),
+      4,
+      async (art: any) => {
+        const enhanced = await buildArticleCard(art);
         return {
           ...art,
           ...enhanced,
@@ -1951,7 +1814,7 @@ app.post("/api/rss/fetch", async (req, res) => {
           isRead: false,
           isStarred: false,
         };
-      })
+      }
     );
 
     addLog("info", `Успешно завершено обновление ленты для ${cleanUrl}. Итог: ${finalArticles.length} статей.`);
