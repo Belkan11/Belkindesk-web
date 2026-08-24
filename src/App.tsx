@@ -952,6 +952,27 @@ export default function App() {
     saveStoredProfiles(nextProfiles);
   };
 
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    
+    // Function to ping
+    const ping = () => {
+      setProfiles(prev => {
+        const next = prev.map(p => p.id === activeSessionId ? { ...p, lastActiveAt: new Date().toISOString() } : p);
+        saveStoredProfiles(next);
+        const activeProfile = next.find(p => p.id === activeSessionId);
+        if (activeProfile) syncUserProfileToServer(activeProfile);
+        return next;
+      });
+    };
+
+    ping();
+    const interval = setInterval(ping, 60000);
+    return () => clearInterval(interval);
+  }, [activeSessionId]);
+
+
   const handleDeleteUserProfile = (userId: string) => {
     const nextProfiles = profiles.filter((p) => p.id !== userId);
     setProfiles(nextProfiles);
@@ -1109,6 +1130,7 @@ export default function App() {
             onPlaySound={playUiSound}
             appStyle={appStyle}
             onReprocessArticles={handleReprocessAllArticles}
+            onRefresh={handleRefresh}
             isRefreshing={isRefreshing}
             refreshStatusMessage={refreshStatusMessage}
             onOpenAddFeed={() => {

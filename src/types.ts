@@ -246,6 +246,7 @@ export interface UserProfile {
   bio?: string;
   createdAt: string;
   lastLoginAt?: string;
+  lastActiveAt?: string;
   appStyle?: AppArchetypeStyle;
   customWallpaper?: string;
   customAiPrompt?: string;

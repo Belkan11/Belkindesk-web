@@ -16,6 +16,7 @@ interface MedicalNewsPaneProps {
   onPlaySound?: (type: 'click' | 'success' | 'star') => void;
   appStyle?: AppArchetypeStyle;
   onReprocessArticles?: () => void;
+  onRefresh?: () => void;
   isRefreshing?: boolean;
   refreshStatusMessage?: string;
   onOpenAddFeed: () => void;
@@ -35,6 +36,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
   onPlaySound,
   appStyle = 'classic',
   onReprocessArticles,
+  onRefresh,
   isRefreshing = false,
   refreshStatusMessage = '',
   onOpenAddFeed,
@@ -266,10 +268,10 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
             </div>
 
             <div className="flex items-center gap-3">
-              {onReprocessArticles && (
+              {onRefresh && (
                 <button
                   onClick={() => {
-                    onReprocessArticles();
+                    onRefresh();
                     onPlaySound?.('click');
                   }}
                   disabled={isRefreshing}

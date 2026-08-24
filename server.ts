@@ -1,3 +1,4 @@
+import { applyKeywordsFilter, normalizeText } from './src/utils/filterUtils.ts';
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -829,14 +830,6 @@ const sourceAdapterRegistry: Record<string, SourceAdapter> = {
 // 1. RSS / Atom Feed Fetch & Parse Endpoint
 // ----------------------------------------------------
 
-function normalizeText(text?: string): string {
-  if (!text) return '';
-  try {
-    return text.normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ');
-  } catch (e) {
-    return text.toLowerCase().trim().replace(/\s+/g, ' ');
-  }
-}
 
 
 
@@ -871,48 +864,7 @@ async function enrichArticlesWithFullText(articles: any[]) {
   return articles;
 }
 
-function applyKeywordsFilter(articles: any[], keywords?: string[], excludeKeywords?: string[], keywordMode: 'ANY' | 'ALL' = 'ANY') {
-  const cleanExcludes = (excludeKeywords || []).map(normalizeText).filter(Boolean);
-  const cleanIncludes = (keywords || []).map(normalizeText).filter(Boolean);
 
-  return articles.map(article => {
-    // Check title, description, content, tags
-    const cats = Array.isArray(article.categories) ? article.categories.join(' ') : '';
-    const textContext = normalizeText(
-      `${article.title || ''} ${article.contentSnippet || ''} ${article.content || ''} ${cats}`
-    );
-    
-    if (cleanExcludes.length > 0) {
-      const hasExclude = cleanExcludes.some(kw => textContext.includes(kw));
-      if (hasExclude) return null;
-    }
-    
-    let matchedKeywords: string[] = [];
-    if (cleanIncludes.length > 0) {
-      if (keywordMode === 'ALL') {
-        const matchesAll = cleanIncludes.every(kw => {
-          const match = textContext.includes(kw);
-          if (match) matchedKeywords.push(kw);
-          return match;
-        });
-        if (!matchesAll) return null;
-      } else {
-        // ANY
-        const matchesAny = cleanIncludes.some(kw => {
-          const match = textContext.includes(kw);
-          if (match) matchedKeywords.push(kw);
-          return match;
-        });
-        if (!matchesAny) return null;
-      }
-    }
-    
-    return {
-      ...article,
-      matchedKeywords
-    };
-  }).filter(Boolean);
-}
 
 app.post("/api/rss/fetch", async (req, res) => {
   const { url, feedId, limit: requestedLimit, type, searchQuery, hashtags, keywords, excludeKeywords, keywordMode, category, title } = req.body;

@@ -390,6 +390,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <thead>
                     <tr className="bg-[#161d2a] text-slate-400 border-b border-[#232a3b]">
                       <th className="p-3 font-semibold">Пользователь</th>
+                      <th className="p-3 font-semibold">Активность</th>
                       <th className="p-3 font-semibold">Логин & Пароль</th>
                       <th className="p-3 font-semibold">Специализация</th>
                       <th className="p-3 font-semibold">Роль / Права</th>
@@ -398,6 +399,21 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   </thead>
                   <tbody className="divide-y divide-[#1f2638]">
                     {filteredProfiles.map((p) => {
+                      
+                                            const isOnline = (() => {
+                        if (!p.lastActiveAt && !p.lastLoginAt) return false;
+                        const lastTime = new Date(p.lastActiveAt || p.lastLoginAt || 0).getTime();
+                        return (Date.now() - lastTime) < 5 * 60 * 1000;
+                      })();
+                      const lastSeenStr = (() => {
+                        const ds = p.lastActiveAt || p.lastLoginAt;
+                        if (!ds) return 'Никогда';
+                        return new Date(ds).toLocaleString('ru-RU', {
+                          day: '2-digit', month: '2-digit', year: '2-digit', 
+                          hour: '2-digit', minute: '2-digit'
+                        });
+                      })();
+
                       const isMainAdmin = (p.username && p.username.toLowerCase() === 'belkin') || p.id === 'user-admin-belkin';
                       const isEditing = editingUserId === p.id;
 
@@ -429,6 +445,24 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   </div>
                                 )}
                                 <div className="text-[10px] text-slate-400">{p.email}</div>
+                              </div>
+                            </div>
+                          </td>
+
+                          
+                          
+
+                          {/* Activity & Online Status */}
+                          <td className="p-3">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1.5">
+                                <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse' : 'bg-slate-600'}`} title={isOnline ? 'В сети' : 'Не в сети'} />
+                                <span className={`text-xs ${isOnline ? 'text-emerald-400 font-medium' : 'text-slate-400'}`}>
+                                  {isOnline ? 'В сети' : 'Не в сети'}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 whitespace-nowrap" title="Последнее посещение">
+                                {lastSeenStr}
                               </div>
                             </div>
                           </td>
