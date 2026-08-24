@@ -48,7 +48,7 @@ class GeminiProvider implements AIProvider {
       throw err;
     }
 
-    return response || "{}";
+    return response?.text || "{}";
   }
 }
 
@@ -585,301 +585,29 @@ function parseHtmlArticles(html: string, siteUrl: string, feedId: string, limit 
 // ----------------------------------------------------
 // SearchOrchestrator Logic (YouTube, 4PDA, Reddit, Pikabu)
 // ----------------------------------------------------
-function generateSmartFallbackSearchArticles(params: {
-  type?: string;
-  searchQuery?: string;
-  hashtags?: string[];
-  limit: number;
-  category?: string;
-  title?: string;
-}) {
-  return []; // Disabled per user instructions (no generated/simulated articles allowed)
-  /*
-  const { type = '', searchQuery = '', hashtags = [], limit, category = 'Поиск', title = '' } = params;
-  const platform = type.toUpperCase() || 'SEARCH';
-  const now = new Date();
-  const articles: any[] = [];
-
-  const q = `${searchQuery} ${category} ${title}`.toLowerCase();
-  let topic: 'mobile' | 'culinary' | 'car' | 'general' = 'general';
-  
-  if (q.includes('ремонт') && (q.includes('телефон') || q.includes('смартфон') || q.includes('мобильн') || q.includes('пайк') || q.includes('bga') || q.includes('плата') || q.includes('экран') || q.includes('диспл') || q.includes('frp') || q.includes('iphone') || q.includes('android'))) {
-    topic = 'mobile';
-  } else if (q.includes('рецепт') || q.includes('кулинар') || q.includes('готовк') || q.includes('кухн') || q.includes('блюд') || q.includes('выпечк') || q.includes('еда') || q.includes('шеф') || q.includes('пищ') || q.includes('стейк') || q.includes('пицц') || q.includes('паст')) {
-    topic = 'culinary';
-  } else if (q.includes('авто') || q.includes('машин') || q.includes('двигател') || q.includes('кпп') || q.includes('трансмис') || q.includes('гараж') || q.includes('механик') || q.includes('сто') || q.includes('подвес') || q.includes('двс') || q.includes('тормоз')) {
-    topic = 'car';
-  }
-
-  // Pre-configured rich pools of authentic, highly detailed technical/culinary articles
-  const pools = {
-    mobile: [
-      {
-        title: "Реболлинг процессора A15 Bionic на iPhone 13 Pro: Кейс восстановления после падения",
-        snippet: "Пошаговый технический отчет по пайке процессора. Симптомы: циклическая перезагрузка, ошибка 4013 в Finder. Выполнена очистка компаунда, накатка шаров 0.12мм и усадка чипа на термовоздушной станции при 335°C.",
-        content: `<h3>Кейс-репорт: Реболлинг процессора A15 Bionic</h3>
-                  <p>В лабораторию поступил iPhone 13 Pro после сильного механического повреждения (падения с высоты). Телефон зависел на логотипе Apple с последующим уходом в бесконечную перезагрузку.</p>
-                  <p><strong>Этапы проведенного ремонта:</strong></p>
-                  <ol>
-                    <li>Диагностика системной платы на отсутствие деформаций слоев. Замер сопротивлений вторичных цепей питания процессора — коротких замыканий не обнаружено.</li>
-                    <li>Аккуратный демонтаж компаунда по периметру двухъярусной платы при температуре 220°C с использованием качественного флюса Amtech NC-559.</li>
-                    <li>Разделение плат-бутербродов на нижнюю и верхнюю части, зачистка посадочных площадок сплавом Розе и медной оплеткой.</li>
-                    <li>Снятие процессора A15, очистка кристалла и подложки от остатков старого припоя и жесткого черного компаунда.</li>
-                    <li>Накатка шаров диаметром 0.12мм с использованием качественной припойной пасты (63/37) и прецизионного трафарета под микроскопом.</li>
-                    <li>Монтаж процессора обратно на плату. Контроль посадки по выдавливанию микро-шариков флюса и покачиванию чипа.</li>
-                  </ol>
-                  <p>После сборки бутерброда и прошивки через iTunes аппарат успешно запустился. Все пользовательские данные сохранены, система FaceID работает в штатном режиме.</p>`,
-        image: "https://images.unsplash.com/photo-1597740985671-2a8a3b80502e?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["ремонт смартфонов", "пайка BGA", "iPhone 13 Pro", "реболлинг процессора"]
-      },
-      {
-        title: "Поиск короткого замыкания по первичной линии питания VDD_MAIN на Samsung Galaxy S22",
-        snippet: "Разбор методики точной локализации тепловых аномалий под тепловизором. Выявлен пробитый фильтрующий конденсатор в цепи питания модемной части. Ток утечки составлял 2.4А.",
-        content: `<h3>Диагностика КЗ на системной плате Samsung Galaxy S22</h3>
-                  <p>Аппарат поступил без признаков жизни, на кнопку включения и зарядное устройство не реагирует. При подключении к лабораторному блоку питания (ЛБП) фиксируется моментальное ограничение тока до 2.5А (короткое замыкание по первичной силовой линии).</p>
-                  <p><strong>Решение проблемы:</strong></p>
-                  <p>Плата извлечена из корпуса и подключена к ЛБП с пониженным напряжением 1.2В для предотвращения теплового разрушения соседних дорожек. С помощью портативного тепловизора Seek Thermal Compact на плате обнаружена выраженная горячая точка в районе RF-части.</p>
-                  <p>Под микроскопом выявлен потемневший SMD-конденсатор С4089. С помощью флюса и паяльника Weller конденсатор был аккуратно демонтирован. Замер сопротивления после удаления показал восстановление цепи до нормальных 450 кОм. Конденсатор заменен на аналогичный номиналом 10мкФ с донорской платы.</p>
-                  <p>Телефон заряжается штатно, потребление тока в режиме сна составляет идеальные 0.01А. Все функции радиосвязи работают отлично.</p>`,
-        image: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["короткое замыкание", "тепловизор", "диагностика плат", "Samsung S22"]
-      },
-      {
-        title: "Восстановление поврежденного OLED-шлейфа iPhone 12 Pro Max методом микро-пайки",
-        snippet: "Практический метод спасения оригинальной матрицы дисплея со сломанными дорожками тачскрина. Микрохирургия печатных проводников толщиной 0.05мм под микроскопом с УФ-отверждением маски.",
-        content: `<h3>Восстановление OLED-шлейфа дисплея</h3>
-                  <p>Дорогостоящие дисплеи OLED часто получают механические повреждения шлейфов при неквалифицированном вскрытии или после сильных ударов. Замена шлейфа целиком на специальном прессе — дорогая процедура. В данном случае мы восстанавливаем оборванные дорожки вручную.</p>
-                  <p><strong>Методология ремонта:</strong></p>
-                  <ul>
-                    <li>Зачистка защитного слоя лака на шлейфе в месте излома с помощью скальпеля с лезвием №11 под увеличением 40х.</li>
-                    <li>Подготовка перемычек (джамперов) из ультратонкой медной лакированной проволоки диаметром 0.03мм.</li>
-                    <li>Пайка перемычек точечным жалом паяльника (температура 290°C, припой ПОС-61 с добавлением жидкого канифольного флюса).</li>
-                    <li>Тщательное промывание места пайки изопропиловым спиртом высокой очистки.</li>
-                    <li>Нанесение защитного УФ-лака (зеленой маски) и полимеризация под ультрафиолетовой лампой в течение 2 минут для надежной фиксации проводников.</li>
-                  </ul>
-                  <p>Тестирование сенсора показало стопроцентное восстановление чувствительности по всей площади экрана без мертвых зон.</p>`,
-        image: "https://images.unsplash.com/photo-1631553127988-348270275841?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["ремонт OLED", "микропайка шлейфа", "iPhone 12", "пайка под микроскопом"]
-      },
-      {
-        title: "Обход FRP блокировки на Google Pixel 6a через уязвимость специальных возможностей",
-        snippet: "Инженерный разбор уязвимости безопасности Android 14. Сброс привязки аккаунта Google после утери паролей без использования платного софта и программаторов.",
-        content: `<h3>Инструкция: Сброс Google Account (FRP Bypass)</h3>
-                  <p>После сброса настроек (Hard Reset) на Google Pixel 6a пользователь столкнулся с окном подтверждения старого графического ключа и почты Google. Пароли были утеряны.</p>
-                  <p><strong>Инженерный метод решения:</strong></p>
-                  <ol>
-                    <li>Запуск меню специальных возможностей (TalkBack) тройным нажатием кнопок громкости.</li>
-                    <li>Голосовой вызов Google Assistant, открытие системных настроек через голосовую команду «Open Settings».</li>
-                    <li>Отключение системных процессов \"Google Play Services\" и \"Android Setup\" через встроенный менеджер приложений.</li>
-                    <li>Перезагрузка устройства и прохождение стартового мастера настроек в автономном режиме без подключения к Wi-Fi.</li>
-                    <li>Активация сервисов Google обратно, добавление нового аккаунта через меню настроек разработчика.</li>
-                  </ol>
-                  <p>Метод основан на особенностях работы локального мастера настроек и является безопасной процедурой восстановления доступа.</p>`,
-        image: "https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["разблокировка телефона", "FRP Bypass", "Android 14", "Google Pixel"]
-      }
-    ],
-    culinary: [
-      {
-        title: "Идеальный сочный стейк Рибай: Секреты контроля температуры и времени отдыха от шеф-повара",
-        snippet: "Классический рецепт приготовления стейка Рибай. Оптимальная температура внутри куска для Medium Rare (54°C), ароматизация чесноком и тимьяном в сливочном масле, важность выдержки мяса.",
-        content: `<h3>Рецепт: Классический стейк Рибай дома</h3>
-                  <p>Приготовить стейк ресторанного уровня дома очень просто, если соблюдать базовые законы термодинамики и биохимии мяса.</p>
-                  <p><strong>Ингредиенты:</strong></p>
-                  <ul>
-                    <li>Толстый край говядины (Рибай влажной или сухой выдержки) — 400 г</li>
-                    <li>Чеснок — 3 зубчика (раздавленных плоской стороной ножа)</li>
-                    <li>Свежий тимьян и розмарин — по 2 веточки</li>
-                    <li>Сливочное масло высокой жирности (82.5%) — 40 г</li>
-                    <li>Крупная морская соль и свежемолотый черный перец — по вкусу</li>
-                  </ul>
-                  <p><strong>Пошаговое приготовление:</strong></p>
-                  <p>Достаньте стейк за 40 минут до жарки, чтобы он прогрелся до комнатной температуры. Насухо промокните бумажным полотенцем. Раскалите чугунную сковороду до легкого дымка. Слегка смажьте мясо оливковым маслом, посолите.</p>
-                  <p>Жарьте на максимальном огне по 1.5 минуты с каждой стороны для получения золотистой корочки (реакция Майяра). Убавьте огонь, добавьте сливочное масло, чеснок, травы. Наклоните сковороду и поливайте стейк ароматным пенящимся маслом еще по 1 минуте. Снимите мясо при температуре внутри 52°C. Заверните в фольгу на 5-7 минут, температура поднимется до идеальных 54°C (Medium Rare), а мясные соки равномерно распределятся по волокнам.</p>`,
-        image: "https://images.unsplash.com/photo-1544025162-d76694265947?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["стейк Рибай", "рецепты из мяса", "кулинарный шедевр", "прожарка мяса"]
-      },
-      {
-        title: "Настоящая римская паста Карбонара: Исключаем сливки, чеснок и ветчину",
-        snippet: "Аутентичный пошаговый рецепт классической пасты Карбонара. Правильное эмульгирование яичных желтков с выдержанным сыром Pecorino Romano и ароматной свиной щекой Guanciale.",
-        content: `<h3>Итальянская классика: Spaghetti alla Carbonara</h3>
-                  <p>Главная ошибка кулинаров-любителей — добавление в Карбонару сливок. Сливки убивают баланс вкуса и превращают нежный соус в тяжелую кашу. Настоящая Карбонара кремовая исключительно за счет эмульсии сырых желтков, жира и воды от варки пасты.</p>
-                  <p><strong>Необходимые компоненты:</strong></p>
-                  <ul>
-                    <li>Спагетти из твердых сортов пшеницы — 200 г</li>
-                    <li>Гуанчиале (вяленая свиная щека) или Панчетта — 100 г</li>
-                    <li>Яичные желтки свежие — 4 шт</li>
-                    <li>Сыр Пекорино Романо (или Пармезан) — 50 г</li>
-                    <li>Свежемолотый черный перец — много (около 1 ч. ложки)</li>
-                  </ul>
-                  <p><strong>Процесс приготовления:</strong></p>
-                  <p>Нарежьте гуанчиале брусочками и вытопите жир на сухой сковороде на среднем огне до легкого хруста. Снимите сковороду с огня. Смешайте желтки с натертым сыром и большим количеством черного перца до состояния густой пасты. Отварите спагетти до состояния Al Dente (на 2 минуты меньше, чем указано на пачке).</p>
-                  <p>Переложите горячую пасту в сковороду с гуанчиале и вытопленным жиром, добавьте 50 мл горячей воды от пасты и активно перемешайте. Дайте сковороде остыть 30 секунд. Быстро влейте яично-сырную смесь и непрерывно взбивайте пасту круговыми движениями. Соус на глазах превратится в гладкий, блестящий крем, обволакивающий спагетти. Подавайте немедленно, посыпав сыром.</p>`,
-        image: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["паста Карбонара", "римская кухня", "итальянский рецепт", "сыр Пекорино"]
-      },
-      {
-        title: "Французский багет с глянцевыми крупными порами: Метод длительного холодного брожения",
-        snippet: "Секреты выпечки идеального хлеба с тонкой хрустящей корочкой. Как замесить высокогидратированное тесто (75%) без кухонного комбайна, техника складываний и выпечка с паром.",
-        content: `<h3>Выпекаем домашний французский багет</h3>
-                  <p>Чтобы получить легендарные крупные дырки в мякише и тонкую корочку, тесту нужно время на развитие клейковины и накопление углекислого газа при низких температурах.</p>
-                  <p><strong>Формула теста:</strong></p>
-                  <p>Мука пшеничная хлебопекарная (белок >12%) — 500 г, Вода ледяная — 375 мл (гидратация 75%), Соль — 10 г, Сухие дрожжи — 2 г.</p>
-                  <p><strong>Схема ведения теста:</strong></p>
-                  <p>Смешайте муку и воду до полного увлажнения (автолиз на 40 минут). Добавьте дрожжи и соль, перемешайте руками до однородности. Вместо замеса используем метод растягивания и складывания (Stretch and Fold) прямо в миске: делайте 4 складывания каждые 30 минут. Затем закройте емкость крышкой и уберите в холодильник на 18-24 часа при температуре +4°C.</p>
-                  <p>На следующий день аккуратно разделите холодное тесто на 3 части, стараясь не выбивать крупные пузыри воздуха. Сформуйте багеты, дайте им расстояться на накрахмаленном льняном полотенце 1 час. Сделайте глубокие косые надрезы лезвием под углом 30 градусов. Выпекайте на разогретом пекарском камне при 240°C первые 10 минут с обильным паром (бросьте горсть льда на нижний противень), затем еще 12 минут без пара до насыщенного медного цвета.</p>`,
-        image: "https://images.unsplash.com/photo-1509440159596-0249088772ff?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["выпечка хлеба", "французский багет", "холодная ферментация", "домашний пекарь"]
-      }
-    ],
-    car: [
-      {
-        title: "Замена цепи ГРМ на двигателе VAG 2.0 TFSI (EA888 gen3): Подробный технический мануал СТО",
-        snippet: "Полноценный разбор процедуры замены растянутой цепи. Контроль выхода плунжера натяжителя, выставление меток балансировочных валов, моменты затяжки постели распредвалов.",
-        content: `<h3>Замена цепного привода ГРМ EA888 gen3</h3>
-                  <p>Двигатели объемом 2.0 литра концерна VAG третьего поколения имеют высокий ресурс, однако к пробегу 120-150 тыс. км цепь ГРМ растягивается, что грозит перескоком звеньев и встречей клапанов с поршневой группой.</p>
-                  <p><strong>Диагностика и разборка:</strong></p>
-                  <p>При компьютерной диагностике в группе 093 зафиксировано отклонение фаз распредвалов в -5.8 градусов (критическое значение — более -3 градусов). Через смотровое окно натяжителя видно 6 канавок выхода плунжера.</p>
-                  <p><strong>Ход ремонтных работ:</strong></p>
-                  <ol>
-                    <li>Демонтаж опорного кронштейна распредвалов, проверка состояния сеточки масляного клапана (была порвана, остатки извлечены из масляного канала).</li>
-                    <li>Снятие пластиковой верхней и металлической нижней крышек ГРМ.</li>
-                    <li>Установка фиксаторов коленвала и распредвалов в верхнюю мертвую точку (ВМТ).</li>
-                    <li>Замена основной цепи ГРМ, цепи балансировочных валов, натяжителей нового образца и направляющих пластиковых башмаков.</li>
-                    <li>Монтаж крышек с заменой герметика и всех уплотнительных резиновых колец. Затяжка болтов постели распредвалов строго по схеме моментом 9 Нм + довернуть на 90°.</li>
-                  </ol>
-                  <p>После сборки отклонение по фазам составляет идеальные -0.2 градуса. Двигатель работает ровно, шум цепи полностью исчез.</p>`,
-        image: "https://images.unsplash.com/photo-1486006920555-c77dce18193b?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["мотор EA888", "замена ГРМ", "ремонт двигателей VAG", "автосервис"]
-      },
-      {
-        title: "Диагностика системы зажигания двигателя при пропусках под нагрузкой",
-        snippet: "Разбор случая пропусков зажигания во втором цилиндре под нагрузкой.",
-        content: "<p>Диагностика выявила микротрещину в катушке зажигания.</p>",
-        image: "https://images.unsplash.com/photo-1517524206127-48bbd363f3d7?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["ремонт зажигания", "пропуски", "катушка зажигания"]
-      }
-    ],
-    general: [
-      {
-        title: "Свежие тенденции в сфере больших языковых моделей и генеративного ИИ в 2026 году",
-        snippet: "Анализ новых мультимодальных архитектур с расширенным контекстным окном. Перспективы локального развертывания компактных LLM моделей на потребительском оборудовании.",
-        content: `<h3>Эволюция LLM и Generative AI</h3>
-                  <p>Индустрия искусственного интеллекта продолжает двигаться в сторону гибридных систем, где мощные облачные вычисления сочетаются с быстрыми и конфиденциальными локальными моделями.</p>
-                  <p>Основными трендами текущего года стали:</p>
-                  <ul>
-                    <li>Развитие агентных систем, способных автономно выполнять цепочки связанных задач без контроля со стороны пользователя.</li>
-                    <li>Мультимодальность «из коробки» — прямая обработка звуковых сигналов и видеопотока без промежуточного преобразования в текст.</li>
-                    <li>Квантование высокой плотности, позволяющее запускать модели с 30+ миллиардами параметров на обычных рабочих станциях.</li>
-                  </ul>`,
-        image: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["искусственный интеллект", "нейросети", "Generative AI", "будущее технологий"]
-      },
-      {
-        title: "Современные подходы к разработке отказоустойчивых веб-приложений",
-        snippet: "Обзор лучших практик оптимизации клиентской части, серверного рендеринга и эффективного кэширования баз данных для работы под высокими нагрузками.",
-        content: `<h3>Архитектурные паттерны современных Web-систем</h3>
-                  <p>Создание современных веб-сервисов требует глубокого понимания протоколов передачи данных, работы браузерных движков и систем распределенного хранения информации.</p>
-                  <p>Ключевыми моментами являются снижение задержек при первом рендеринге (FCP), использование прогрессивного улучшения интерфейсов и защита персональных данных пользователей на уровне транспортного шифрования.</p>`,
-        image: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=600&auto=format&fit=crop&q=80",
-        keyTerms: ["web development", "архитектура ПО", "оптимизация", "базы данных"]
-      }
-    ]
-  };
-
-  const pool = pools[topic] || pools['general'];
-
-  for (let i = 0; i < limit; i++) {
-    const itemIdx = i % pool.length;
-    const baseItem = pool[itemIdx];
-    const d = new Date(now.getTime() - i * 3600 * 4 * 1000); // Разные метки времени
-
-    const finalTitle = baseItem.title;
-
-    const tagsList = hashtags && hashtags.length > 0 ? hashtags : baseItem.keyTerms;
-    const stableId = `fallback-${topic}-${i}-${encodeURIComponent(finalTitle.slice(0, 15))}`;
-
-    articles.push({
-      id: stableId,
-      feedId: 'search-results',
-      feedTitle: title || platform || 'Интеллектуальный Поиск',
-      feedCategory: category || 'Поиск',
-      title: finalTitle,
-      titleRu: finalTitle,
-      link: `https://google.com/search?q=${encodeURIComponent(finalTitle)}`,
-      pubDate: d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
-      isoDate: d.toISOString(),
-      author: platform,
-      content: baseItem.content,
-      contentSnippet: baseItem.snippet,
-      summaryOneLine: finalTitle,
-      summaryThreeLines: baseItem.snippet,
-      keyTerms: tagsList,
-      categories: tagsList,
-      imageUrl: baseItem.image
-    });
-  }
-
-  return articles;
-  */
-}
-
-function getRealPrimaryImage(images: string[], pageUrl: string): string | undefined {
-  if (!images || images.length === 0) return undefined;
-  
-  // A clean list of promo/advertising/tracking/icon patterns to exclude
-  const adPromoPatterns = [
-    /promo/i, /advertis/i, /banner/i, /logo/i, /icon/i, /avatar/i, /header/i, /footer/i,
-    /ad-/i, /-ad/i, /widget/i, /facebook/i, /twitter/i, /social/i, /button/i, /badge/i,
-    /sprite/i, /loading/i, /placeholder/i, /pixel/i, /counter/i, /mc\.yandex/i, /google-analytics/i,
-    /metrics/i, /reklama/i, /gif/i, /yandex/i, /mail\.ru/i, /vkontakte/i, /doubleclick/i
-  ];
-
-  for (const img of images) {
-    const isPromo = adPromoPatterns.some(p => p.test(img));
-    if (!isPromo && img.startsWith('http')) {
-      return img;
-    }
-  }
-  
-  const firstAbsolute = images.find(img => img.startsWith('http'));
-  return firstAbsolute;
-}
-
 // ----------------------------------------------------
 // Adapter Registry
 // ----------------------------------------------------
 interface SourceAdapter {
   type: string;
-  fetch: (params: { url: string; searchQuery: string; limit: number }) => Promise<any[]>;
+  fetch: (params: { url?: string; searchQuery?: string; limit: number; timeoutMs?: number }) => Promise<any[]>;
 }
 
 const sourceAdapterRegistry: Record<string, SourceAdapter> = {
-  reddit: {
-    type: 'reddit',
-    fetch: async ({ url }) => {
-      // Not fully implemented without RSS parser here, so return empty for now,
-      // it will fall back to normal RSS fetching if a valid URL is provided.
-      return [];
-    }
-  },
-  telegram: {
-    type: 'telegram',
-    fetch: async () => []
-  },
-  pikabu: {
-    type: 'pikabu',
-    fetch: async () => []
-  },
-  
   youtube: {
     type: 'youtube',
-    fetch: async ({ url, searchQuery, limit = 10 }: any) => {
+    fetch: async ({ url, searchQuery, limit = 10, timeoutMs = 12000 }) => {
+      const targetUrl = url || `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery || '')}`;
+      
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const targetUrl = url || `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`;
         const res = await fetch(targetUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+          signal: controller.signal
         });
+        clearTimeout(timeout);
+        
         const html = await res.text();
         const match = html.match(/var ytInitialData = (\{.*?\});<\/script>/);
         if (match) {
@@ -892,88 +620,175 @@ const sourceAdapterRegistry: Record<string, SourceAdapter> = {
                 title: item.videoRenderer.title.runs[0].text,
                 link: 'https://www.youtube.com/watch?v=' + item.videoRenderer.videoId,
                 contentSnippet: item.videoRenderer.descriptionSnippet?.runs?.map((r: any)=>r.text).join('') || '',
-                pubDate: new Date().toISOString(),
+                pubDate: new Date().toISOString(), // YouTube search doesn't give exact ISO date, just "2 weeks ago" in publishedTimeText
                 guid: item.videoRenderer.videoId,
-                imageUrl: item.videoRenderer.thumbnail?.thumbnails?.[0]?.url || ''
+                imageUrl: item.videoRenderer.thumbnail?.thumbnails?.[0]?.url || '',
+                author: item.videoRenderer.ownerText?.runs?.[0]?.text || ''
               });
             }
           }
           return articles;
         }
-      } catch (e) {
-        console.error("Youtube parsing error:", e);
+        return [];
+      } catch (err) {
+        clearTimeout(timeout);
+        throw err;
       }
-      return [];
     }
   },
+  
+  
+  search: {
+    type: 'search',
+    fetch: async ({ searchQuery, limit = 10, timeoutMs = 12000 }) => {
+      if (!searchQuery) return [];
+      
+      const apiKey = process.env.SERPER_API_KEY;
+      if (!apiKey) {
+        throw new Error("API ключ SERPER_API_KEY не настроен. Универсальный поиск недоступен.");
+      }
 
-  ifixit: {
-    type: 'ifixit',
-    fetch: async () => []
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch('https://google.serper.dev/search', {
+          method: 'POST',
+          headers: {
+            'X-API-KEY': apiKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ q: searchQuery, num: limit }),
+          signal: controller.signal
+        });
+        clearTimeout(timeout);
+        
+        if (!res.ok) {
+           const errText = await res.text();
+           throw new Error(`Serper API Error: ${res.status} - ${errText}`);
+        }
+        
+        const data = await res.json();
+        const articles = [];
+        
+        if (data.organic && Array.isArray(data.organic)) {
+           for (const item of data.organic) {
+             let author = item.source || '';
+             if (!author && item.link) {
+               try {
+                 author = new URL(item.link).hostname.replace(/^www\./, '');
+               } catch (e) {}
+             }
+             articles.push({
+               title: item.title,
+               link: item.link,
+               contentSnippet: item.snippet || '',
+               pubDate: item.date ? new Date(item.date).toISOString() : new Date().toISOString(),
+               guid: item.link,
+               author: author
+             });
+           }
+        }
+        return articles;
+      } catch (err) {
+        clearTimeout(timeout);
+        throw err;
+      }
+    }
   },
-  '4pda': {
-    type: '4pda',
-    fetch: async () => []
-  },
-  rss: {
-    type: 'rss',
-    fetch: async () => []
-  },
-  atom: {
-    type: 'atom',
-    fetch: async () => []
-  }
+  reddit: { type: 'reddit', fetch: async () => { throw new Error("SOURCE_NOT_SUPPORTED"); } },
+  telegram: { type: 'telegram', fetch: async () => { throw new Error("SOURCE_NOT_SUPPORTED"); } },
+  pikabu: { type: 'pikabu', fetch: async () => { throw new Error("SOURCE_NOT_SUPPORTED"); } },
+  '4pda': { type: '4pda', fetch: async () => { throw new Error("SOURCE_NOT_SUPPORTED"); } },
+  ifixit: { type: 'ifixit', fetch: async () => { throw new Error("SOURCE_NOT_SUPPORTED"); } }
 };
 
 // ----------------------------------------------------
-// 1. RSS / Atom Feed Fetch & Parse Endpoint (with 10-item limit per source)
+// 1. RSS / Atom Feed Fetch & Parse Endpoint
 // ----------------------------------------------------
 
-function applyKeywordsFilter(articles: any[], keywords?: string[], excludeKeywords?: string[]) {
-  return articles.filter(article => {
-    const textContext = `${article.title || ''} ${article.contentSnippet || ''}`.toLowerCase();
+function normalizeText(text?: string): string {
+  if (!text) return '';
+  try {
+    return text.normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ');
+  } catch (e) {
+    return text.toLowerCase().trim().replace(/\s+/g, ' ');
+  }
+}
+
+function applyKeywordsFilter(articles: any[], keywords?: string[], excludeKeywords?: string[], keywordMode: 'ANY' | 'ALL' = 'ANY') {
+  const cleanExcludes = (excludeKeywords || []).map(normalizeText).filter(Boolean);
+  const cleanIncludes = (keywords || []).map(normalizeText).filter(Boolean);
+
+  return articles.map(article => {
+    // Check title, description, content, tags
+    const cats = Array.isArray(article.categories) ? article.categories.join(' ') : '';
+    const textContext = normalizeText(
+      `${article.title || ''} ${article.contentSnippet || ''} ${article.content || ''} ${cats}`
+    );
     
-    if (excludeKeywords && excludeKeywords.length > 0) {
-      const hasExclude = excludeKeywords.some(kw => textContext.includes(kw.toLowerCase()));
-      if (hasExclude) return false;
+    if (cleanExcludes.length > 0) {
+      const hasExclude = cleanExcludes.some(kw => textContext.includes(kw));
+      if (hasExclude) return null;
     }
     
-    if (keywords && keywords.length > 0) {
-      const hasInclude = keywords.some(kw => textContext.includes(kw.toLowerCase()));
-      if (!hasInclude) return false;
+    let matchedKeywords: string[] = [];
+    if (cleanIncludes.length > 0) {
+      if (keywordMode === 'ALL') {
+        const matchesAll = cleanIncludes.every(kw => {
+          const match = textContext.includes(kw);
+          if (match) matchedKeywords.push(kw);
+          return match;
+        });
+        if (!matchesAll) return null;
+      } else {
+        // ANY
+        const matchesAny = cleanIncludes.some(kw => {
+          const match = textContext.includes(kw);
+          if (match) matchedKeywords.push(kw);
+          return match;
+        });
+        if (!matchesAny) return null;
+      }
     }
     
-    return true;
-  });
+    return {
+      ...article,
+      matchedKeywords
+    };
+  }).filter(Boolean);
 }
 
 app.post("/api/rss/fetch", async (req, res) => {
-  const { url, feedId, limit: requestedLimit, type, searchQuery, hashtags, keywords, excludeKeywords, category, title } = req.body;
+  const { url, feedId, limit: requestedLimit, type, searchQuery, hashtags, keywords, excludeKeywords, keywordMode, category, title } = req.body;
   const limit = typeof requestedLimit === 'number' && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 50;
 
   const cleanType = type ? String(type).toLowerCase().trim() : '';
   let scrapedArticles: any[] = [];
-  try {
-    const adapter = sourceAdapterRegistry[cleanType];
-    if (adapter) {
-      scrapedArticles = await adapter.fetch({ url, searchQuery, limit });
+  const adapter = sourceAdapterRegistry[cleanType];
+  if (adapter) {
+    try {
+      scrapedArticles = await adapter.fetch({ url, searchQuery, limit,  });
+      const filteredScraped = applyKeywordsFilter(scrapedArticles, keywords, excludeKeywords, keywordMode).slice(0, limit);
+      res.json({
+        title: title || type || "Поиск",
+        description: `Поисковая выдача для ${searchQuery || type}`,
+        link: url || "https://google.com",
+        itemCount: filteredScraped.length,
+        articles: filteredScraped,
+      });
+      return;
+    } catch (scrapeErr: any) {
+      addLog("warn", `Скрейпинг источника ${cleanType} завершился ошибкой: ${scrapeErr.message}`);
+      res.status(400).json({
+        error: `Не удалось загрузить источник ${cleanType}: ${scrapeErr.message}`,
+        title: title || type || "Источник",
+        description: "Поток не доступен",
+        link: url || "",
+        itemCount: 0,
+        articles: [],
+      });
+      return;
     }
-  } catch (scrapeErr: any) {
-    addLog("warn", `Прямой скрейпинг завершился предупреждением: ${scrapeErr.message}`);
-  }
-
-  
-  // If we already scraped articles from an adapter, and there's no URL to fetch standard RSS from, return them immediately
-  if (scrapedArticles.length > 0) {
-    const filteredScraped = applyKeywordsFilter(scrapedArticles, keywords, excludeKeywords).slice(0, limit);
-    res.json({
-      title: title || type || "Поиск",
-      description: `Поисковая выдача для ${searchQuery || type}`,
-      link: "https://google.com",
-      itemCount: filteredScraped.length,
-      articles: filteredScraped,
-    });
-    return;
   }
 
   if (!url || typeof url !== "string") {
@@ -1009,8 +824,18 @@ app.post("/api/rss/fetch", async (req, res) => {
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
     }
 
+    
+    const contentLength = response.headers.get("content-length");
+    if (contentLength && parseInt(contentLength, 10) > 5 * 1024 * 1024) {
+      throw new Error("Размер ответа превышает лимит (5MB)");
+    }
+
     const contentType = response.headers.get("content-type");
     const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength > 5 * 1024 * 1024) {
+      throw new Error("Слишком большой ответ от сервера (более 5MB)");
+    }
+
     const rawText = decodeBufferText(arrayBuffer, contentType);
     addLog("info", `Успешный ответ от сервера. Размер данных: ${rawText.length} байт. Content-Type: ${contentType}`);
 
@@ -1055,7 +880,14 @@ app.post("/api/rss/fetch", async (req, res) => {
             },
           });
           if (subResp.ok) {
+            const subContentLength = subResp.headers.get("content-length");
+            if (subContentLength && parseInt(subContentLength, 10) > 5 * 1024 * 1024) {
+              throw new Error("Размер альтернативного потока превышает лимит (5MB)");
+            }
             const subBuf = await subResp.arrayBuffer();
+            if (subBuf.byteLength > 5 * 1024 * 1024) {
+              throw new Error("Размер альтернативного потока превышает лимит (5MB)");
+            }
             const subText = decodeBufferText(subBuf, subResp.headers.get("content-type"));
             parsedResult = parseXmlFeed(subText, feedId || "feed", limit, realRssUrl);
             addLog("info", `Успешно загружен и спарсен альтернативный RSS поток. Найдено статей: ${parsedResult.articles.length}`);
@@ -1077,7 +909,10 @@ app.post("/api/rss/fetch", async (req, res) => {
               headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
             });
             if (probeResp.ok) {
+              const pContentLength = probeResp.headers.get("content-length");
+              if (pContentLength && parseInt(pContentLength, 10) > 5 * 1024 * 1024) continue;
               const pBuf = await probeResp.arrayBuffer();
+              if (pBuf.byteLength > 5 * 1024 * 1024) continue;
               const pText = decodeBufferText(pBuf, probeResp.headers.get("content-type"));
               const pResult = parseXmlFeed(pText, feedId || "feed", limit, `${origin}${p}`);
               if (pResult.articles.length > 0) {
@@ -1098,7 +933,7 @@ app.post("/api/rss/fetch", async (req, res) => {
       }
     }
 
-    const finalArticles = applyKeywordsFilter(parsedResult.articles, keywords, excludeKeywords);
+    const finalArticles = applyKeywordsFilter(parsedResult.articles, keywords, excludeKeywords, keywordMode);
     addLog("info", `Успешно завершено обновление ленты для ${cleanUrl}. Итог: ${finalArticles.length} статей после фильтрации.`);
 
     res.json({
@@ -1113,8 +948,7 @@ app.post("/api/rss/fetch", async (req, res) => {
     addLog("error", `Критическая ошибка при получении ленты ${cleanUrl}: ${error.message}`);
     console.error("RSS fetch error for:", cleanUrl, error.message);
     
-    res.json({
-      warning: `Не удалось загрузить ленту: ${error.message}`,
+    res.status(400).json({ error: `Не удалось загрузить ленту: ${error.message}`,
       title: title || "Источник новостей",
       description: "Поток не доступен",
       link: cleanUrl,
@@ -1240,7 +1074,9 @@ app.post("/api/ai/discover-feeds", async (req, res) => {
 - confidence: "verified" | "suggested"`;
 
     const provider = getAiProvider(req);
+    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
     const response = await provider.generateContent({
+      model: aiModel,
       // model: "gemini-3.7-flash", omitted as provider handles it
       prompt: `Подбери качественные RSS потоки по следующему запросу пользователя: "${prompt}". Обязательно укажи реальные URL-адреса потоков.`,
       systemInstruction,
@@ -1250,7 +1086,7 @@ app.post("/api/ai/discover-feeds", async (req, res) => {
           items: {
             type: Type.OBJECT,
             properties: {
-              title: { type: Type.STRING,
+              title: { type: Type.STRING },
               url: { type: Type.STRING },
               siteUrl: { type: Type.STRING },
               category: { type: Type.STRING },
@@ -1261,10 +1097,9 @@ app.post("/api/ai/discover-feeds", async (req, res) => {
               },
               confidence: { type: Type.STRING },
             },
-            required: ["title", "url", "category", "description", "tags"],
-          },
-        },
-      },
+            required: ["title", "url", "category", "description", "tags"]
+          }
+        }
     });
 
     const text = response || "[]";
@@ -1355,7 +1190,9 @@ app.post("/api/ai/process-articles", async (req, res) => {
 ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗОВАТЕЛЯ ИЗ НАСТРОЕК:\n${customPrompt}` : 'Фокусируйся на фактах, детальном изложении, инженерной/медицинской точности и полном раскрытии терминов и моделей.'}`;
 
     const provider = getAiProvider(req);
+    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
     const response = await provider.generateContent({
+      model: aiModel,
       prompt: `Список статей для обработки и форматирования:\n\n${formattedList}`,
       systemInstruction,
         
@@ -1367,7 +1204,7 @@ ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗО
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  id: { type: Type.STRING,
+                  id: { type: Type.STRING },
                   titleRu: { type: Type.STRING },
                   summaryOneLine: { type: Type.STRING },
                   summaryThreeLines: { type: Type.STRING },
@@ -1382,9 +1219,8 @@ ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗО
               },
             },
           },
-          required: ["processedArticles"],
-        },
-      },
+          required: ["processedArticles"]
+        }
     });
 
     const parsedJson = JSON.parse(response || "{}");
@@ -1400,12 +1236,14 @@ ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗО
       if (proc) {
         return {
           ...art,
-          titleRu: proc.titleRu || art.title,
-          summaryOneLine: proc.summaryOneLine || art.contentSnippet,
-          summaryThreeLines: proc.summaryThreeLines || art.contentSnippet,
-          detailedContent: proc.detailedContent || art.contentSnippet,
-          keyTerms: proc.keyTerms || [],
-          aiSentiment: proc.sentiment || 'analytical',
+          ai: {
+            titleRu: proc.titleRu || art.title,
+            summaryOneLine: proc.summaryOneLine || art.contentSnippet,
+            summaryThreeLines: proc.summaryThreeLines || art.contentSnippet,
+            detailedContent: proc.detailedContent || art.contentSnippet,
+            keyTerms: proc.keyTerms || [],
+            sentiment: proc.sentiment || 'analytical',
+          }
         };
       }
       return {
@@ -1477,14 +1315,16 @@ app.post("/api/ai/summarize-article", async (req, res) => {
 ${customPrompt && customPrompt.trim().length > 5 ? `ОБЯЗАТЕЛЬНО СЛЕДУЙ ПРОМПТУ ОБРАБОТКИ ИЗ НАСТРОЕК ПОЛЬЗОВАТЕЛЯ:\n${customPrompt.trim()}` : 'Исключи всю воду, вводные фразы, кликбейт и рекламные клише. Сохрани все важные термины, формулы, измерения и числа.'}`;
 
     const provider = getAiProvider(req);
+    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
     const response = await provider.generateContent({
+      model: aiModel,
       prompt: `Заголовок статьи: ${article.title}\nИсточник: ${article.feedTitle || 'Источник'}\nСсылка: ${article.link}\n\nТекст публикации:\n${articleText.slice(0, 10000)}`,
       systemInstruction,
         
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            titleRu: { type: Type.STRING,
+            titleRu: { type: Type.STRING },
             content: { type: Type.STRING },
             summaryOneLine: { type: Type.STRING },
             keyTerms: {
@@ -1493,9 +1333,8 @@ ${customPrompt && customPrompt.trim().length > 5 ? `ОБЯЗАТЕЛЬНО СЛ�
             },
             estimatedReadMinutes: { type: Type.INTEGER },
           },
-          required: ["titleRu", "content", "summaryOneLine", "keyTerms"],
-        },
-      },
+          required: ["titleRu", "content", "summaryOneLine", "keyTerms"]
+        }
     });
 
     const data = JSON.parse(response || "{}");
@@ -1556,7 +1395,9 @@ app.post("/api/ai/summarize", async (req, res) => {
       : defaultInstruction;
 
     const provider = getAiProvider(req);
+    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
     const response = await provider.generateContent({
+      model: aiModel,
       prompt: `Заголовок материала: ${title || "Без заголовка"}\n\nТекст/сниппет публикации:\n${content.slice(0, 8000)}\n\nРежим: ${mode}`,
       systemInstruction,
         
@@ -1617,14 +1458,16 @@ app.post("/api/ai/digest", async (req, res) => {
 Сгруппируй важнейшие события, выдели тренды и составь короткие понятные выводы.`;
 
     const provider = getAiProvider(req);
+    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
     const response = await provider.generateContent({
+      model: aiModel,
       prompt: `Категория: ${category || "Все подписки"}\n\nСвежие публикации:\n${articlesList}`,
       systemInstruction,
         
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            title: { type: Type.STRING,
+            title: { type: Type.STRING },
             date: { type: Type.STRING },
             topStories: {
               type: Type.ARRAY,
@@ -1650,9 +1493,8 @@ app.post("/api/ai/digest", async (req, res) => {
               items: { type: Type.STRING },
             },
           },
-          required: ["title", "topStories", "overallTrends", "keyTakeaways"],
-        },
-      },
+          required: ["title", "topStories", "overallTrends", "keyTakeaways"]
+        }
     });
 
     const text = response || "{}";
@@ -1685,8 +1527,9 @@ app.post("/api/ai/ask-feeds", async (req, res) => {
 Приводи конкретные факты, источники и ссылки. Если информации недостаточно в лентах, дай общий экспертный ответ и поясни это.`;
 
     const provider = getAiProvider(req);
+    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
     const response = await provider.generateContent({
-      model: "gemini-3.7-flash",
+      model: aiModel,
       prompt: `Вопрос пользователя: "${query}"\n\nКонтекст из лент:\n${context}`,
       systemInstruction,
     });

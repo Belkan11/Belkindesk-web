@@ -12,6 +12,31 @@ export const DEFAULT_AI_PROMPTS = {
 
 export const ENGINEER_DEFAULT_FEEDS: FeedConfig[] = [
   {
+    id: 'feed-iphone-repair-test',
+    name: 'iPhone Repair Test',
+    category: 'QA Testing',
+    description: 'Тестовая пользовательская лента (Final QA)',
+    enabled: true,
+    sources: [
+      {
+        id: 'src-yt-iphone-repair',
+        name: 'YouTube iPhone Repair',
+        type: 'youtube',
+        query: 'iPhone repair',
+        enabled: true,
+      },
+      {
+        id: 'src-yt-iphone-teardown',
+        name: 'YouTube iPhone Teardown',
+        type: 'youtube',
+        query: 'iPhone teardown',
+        enabled: true,
+      }
+    ],
+    keywords: ['iPhone'],
+    excludeKeywords: ['case'],
+  },
+  {
     id: 'feed-yt-frp',
     name: 'FRP',
     category: 'Разблокировка & ПО',

@@ -60,13 +60,13 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
         const q = searchQuery.toLowerCase();
         return (
           art.title.toLowerCase().includes(q) ||
-          (art.titleRu && art.titleRu.toLowerCase().includes(q)) ||
-          (art.summaryOneLine && art.summaryOneLine.toLowerCase().includes(q)) ||
-          (art.summaryThreeLines && art.summaryThreeLines.toLowerCase().includes(q)) ||
+          ((art.ai?.titleRu || art.titleRu) && (art.ai?.titleRu || art.titleRu).toLowerCase().includes(q)) ||
+          ((art.ai?.summaryOneLine || art.summaryOneLine) && (art.ai?.summaryOneLine || art.summaryOneLine).toLowerCase().includes(q)) ||
+          ((art.ai?.summaryThreeLines || art.summaryThreeLines) && (art.ai?.summaryThreeLines || art.summaryThreeLines).toLowerCase().includes(q)) ||
           art.contentSnippet?.toLowerCase().includes(q) ||
           art.feedTitle?.toLowerCase().includes(q) ||
           (art.categories && art.categories.some((c) => c.toLowerCase().includes(q))) ||
-          (art.keyTerms && art.keyTerms.some((k) => k.toLowerCase().includes(q)))
+          ((art.ai?.keyTerms || art.keyTerms) && (art.ai?.keyTerms || art.keyTerms).some((k) => k.toLowerCase().includes(q)))
         );
       }
       return true;
@@ -333,8 +333,8 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
               /* ============================================================== */
               <div className="space-y-1">
                 {filteredArticles.map((art, idx) => {
-                  const displayTitle = art.titleRu || art.title;
-                  const displaySnippet = art.summaryOneLine || art.contentSnippet || '';
+                  const displayTitle = (art.ai?.titleRu || art.titleRu) || art.title;
+                  const displaySnippet = (art.ai?.summaryOneLine || art.summaryOneLine) || art.contentSnippet || '';
                   const hasImages = (art.imageUrls && art.imageUrls.length > 0) || !!art.imageUrl;
 
                   return (
@@ -432,8 +432,8 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
               /* ============================================================== */
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {filteredArticles.map((art, idx) => {
-                  const displayTitle = art.titleRu || art.title;
-                  const displayDesc = art.summaryThreeLines || art.summaryOneLine || art.contentSnippet || '';
+                  const displayTitle = (art.ai?.titleRu || art.titleRu) || art.title;
+                  const displayDesc = (art.ai?.summaryThreeLines || art.summaryThreeLines) || (art.ai?.summaryOneLine || art.summaryOneLine) || art.contentSnippet || '';
                   const img = (art.imageUrls && art.imageUrls[0]) || art.imageUrl;
 
                   return (
@@ -531,9 +531,9 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
                       </div>
 
                       {/* Bottom Tags / Key Terms */}
-                      {art.keyTerms && art.keyTerms.length > 0 && (
+                      {(art.ai?.keyTerms || art.keyTerms) && (art.ai?.keyTerms || art.keyTerms).length > 0 && (
                         <div className="mt-2.5 pt-2 border-t border-[#202632] flex flex-wrap gap-1 items-center">
-                          {art.keyTerms.slice(0, 3).map((term, tIdx) => (
+                          {(art.ai?.keyTerms || art.keyTerms).slice(0, 3).map((term, tIdx) => (
                             <span
                               key={tIdx}
                               className="text-[9px] text-[#ffcc00]/80 bg-[#1c1810] px-1.5 py-0.5 rounded border border-[#3b3220] font-mono"

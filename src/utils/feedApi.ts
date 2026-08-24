@@ -60,9 +60,7 @@ export async function fetchFeedArticles(feed: any, limit = 50): Promise<FeedFetc
   }
 }
 
-function generateFallbackArticles(feed: FeedConfig): Article[] {
-  return [];
-}
+
 
 export async function discoverFeedsFromUrl(url: string) {
   const res = await fetch('/api/rss/discover', {
@@ -80,9 +78,11 @@ function getAiHeaders(): Record<string, string> {
     const key = localStorage.getItem('belkin_user_ai_key');
     const provider = localStorage.getItem('belkin_user_ai_provider');
     const model = localStorage.getItem('belkin_user_ai_model');
+    const url = localStorage.getItem('belkin_user_ai_url');
     if (key) headers['x-user-ai-key'] = key;
     if (provider) headers['x-user-ai-provider'] = provider;
     if (model) headers['x-user-ai-model'] = model;
+    if (url) headers['x-user-ai-url'] = url;
   } catch (e) {}
   return headers;
 }
@@ -124,11 +124,11 @@ export async function aiSummarizeArticleDeep(article: Article, customPrompt?: st
   } catch (err) {
     console.warn('Deep summary fallback:', err);
     return {
-      titleRu: article.titleRu || article.title,
-      main: article.summaryOneLine || article.contentSnippet || 'Публикация содержит актуальные практические данные.',
+      titleRu: (article.ai?.titleRu || article.titleRu) || article.title,
+      main: (article.ai?.summaryOneLine || article.summaryOneLine) || article.contentSnippet || 'Публикация содержит актуальные практические данные.',
       clinicalSignificance: 'Материал имеет практическую ценность для специалистов.',
       takeaway: 'Рекомендуется изучить полный материал по ссылке.',
-      keyTerms: article.keyTerms || article.categories || [],
+      keyTerms: (article.ai?.keyTerms || article.keyTerms) || article.categories || [],
       estimatedReadMinutes: 2,
       images: article.imageUrls || (article.imageUrl ? [article.imageUrl] : []),
       link: article.link,

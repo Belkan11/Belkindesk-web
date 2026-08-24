@@ -49,9 +49,20 @@ export interface Article {
   imageUrl?: string;
   imageUrls?: string[];
   categories?: string[];
+  matchedKeywords?: string[];
   isRead?: boolean;
   isStarred?: boolean;
   isSavedLater?: boolean;
+  ai?: {
+    titleRu?: string;
+    summaryOneLine?: string;
+    summaryThreeLines?: string;
+    detailedContent?: string;
+    keyTerms?: string[];
+    aiSummary?: string;
+    aiKeyTakeaways?: string[];
+    aiSentiment?: 'positive' | 'neutral' | 'negative' | 'analytical';
+  };
   aiSummary?: string;
   aiKeyTakeaways?: string[];
   aiSentiment?: 'positive' | 'neutral' | 'negative' | 'analytical';
@@ -75,6 +86,7 @@ export interface NewsSource {
   query?: string;
   keywords?: string[];
   excludeKeywords?: string[];
+  keywordMode?: 'ANY' | 'ALL';
   language?: string;
   maxArticles?: number;
 }
@@ -99,6 +111,7 @@ export interface FeedConfig {
   sources: NewsSource[];
   keywords?: string[];
   excludeKeywords?: string[];
+  keywordMode?: 'ANY' | 'ALL';
   language?: string;
   refreshInterval?: number;
   maxArticles?: number;
@@ -256,7 +269,7 @@ export interface UserProfile {
   notes?: MedicalNote[];
   timers?: MedicalTimerItem[];
   accessibility?: AccessibilityConfig;
-  aiProvider?: 'gemini' | 'openai' | 'custom';
+  aiProvider?: 'gemini' | 'openai' | 'openrouter' | 'custom';
   aiApiKey?: string;
   aiModel?: string;
 }

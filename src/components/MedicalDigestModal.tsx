@@ -103,22 +103,20 @@ export const MedicalDigestModal: React.FC<MedicalDigestModalProps> = ({
 
     if (article.detailedContent) {
       setDigest({
-        title: article.titleRu || article.title,
-        content: article.detailedContent,
-        summaryOneLine: article.summaryOneLine,
+        title: article.ai?.titleRu || article.title,
+        content: article.ai?.detailedContent || article.contentSnippet || article.content || "Содержание не адаптировано.",
+        summaryOneLine: article.ai?.summaryOneLine,
         estimatedReadMinutes: 2,
       });
     } else {
       // Fast fallback to local snippet so user can read instantly
       setDigest({
-        title: article.titleRu || article.title,
+        title: article.ai?.titleRu || article.title,
         content: article.contentSnippet || article.content || 'Содержание не адаптировано.',
-        summaryOneLine: article.summaryOneLine || '',
+        summaryOneLine: article.ai?.summaryOneLine || "",
         estimatedReadMinutes: 1,
       });
-      if (enableAutoAiProcessing) {
-        generateDeepDigest(article);
-      }
+      
     }
   }, [article, customPrompt, enableAutoAiProcessing]);
 
@@ -128,18 +126,16 @@ export const MedicalDigestModal: React.FC<MedicalDigestModalProps> = ({
     try {
       const data = await aiSummarizeArticleDeep(art, customPrompt);
       if (data) {
-        const textContent = data.content || data.main || art.detailedContent || art.contentSnippet || art.content || '';
+        const textContent = data.content || data.main || art.ai?.detailedContent || art.contentSnippet || art.content || '';
         setDigest({
-          title: data.titleRu || art.titleRu || art.title,
+          title: data.titleRu || art.ai?.titleRu || art.title,
           content: textContent,
-          summaryOneLine: data.summaryOneLine || art.summaryOneLine,
+          summaryOneLine: data.summaryOneLine || art.ai?.summaryOneLine,
           estimatedReadMinutes: data.estimatedReadMinutes || 2,
         });
-
         if (Array.isArray(data.keyTerms) && data.keyTerms.length > 0) {
           setKeyTerms(data.keyTerms);
         }
-
         if (Array.isArray(data.images) && data.images.length > 0) {
           setArticleImages((prev) => {
             const combined = [...prev];
@@ -150,8 +146,8 @@ export const MedicalDigestModal: React.FC<MedicalDigestModalProps> = ({
           });
         }
       }
-    } catch (err) {
-      console.warn('Deep digest generation fallback:', err);
+    } catch (err: any) {
+      alert(err.message || "Ошибка AI обработки");
     } finally {
       setIsGenerating(false);
     }
@@ -299,8 +295,19 @@ export const MedicalDigestModal: React.FC<MedicalDigestModalProps> = ({
               </div>
             </div>
 
+            
             {/* Actions */}
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => generateDeepDigest(article)}
+                disabled={isGenerating}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#283240] hover:bg-[#324054] text-slate-200 transition font-sans cursor-pointer disabled:opacity-50"
+                title="Адаптировать с помощью AI"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-[#ffcc00]" />
+                <span className="font-medium">AI обработать</span>
+              </button>
+
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#181d27] hover:bg-[#232b38] text-slate-300 transition cursor-pointer text-xs"

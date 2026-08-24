@@ -1,5 +1,6 @@
+import { FeedConfigEditor } from './FeedConfigEditor';
 import React, { useState, useEffect, useRef } from 'react';
-import { 
+import {  
   X, 
   Layers, 
   Filter, 
@@ -27,7 +28,7 @@ import {
   MapPin,
   Globe,
   Compass
-} from 'lucide-react';
+, Database } from 'lucide-react';
 import { FeedConfig, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle } from '../types';
 import { MEDICAL_FEEDS, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS, CURATED_FEED_PRESETS } from '../data/curatedFeeds';
 import { INITIAL_MEDICAL_TIMERS } from '../utils/storage';
@@ -114,6 +115,20 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
 
   // AI Prompt local state
   const [localPrompt, setLocalPrompt] = useState<string>(customAiPrompt || DEFAULT_AI_PROMPTS.engineer);
+  const [localProvider, setLocalProvider] = useState(() => localStorage.getItem('belkin_user_ai_provider') || 'gemini');
+  const [localKey, setLocalKey] = useState(() => localStorage.getItem('belkin_user_ai_key') || '');
+  const [localModel, setLocalModel] = useState(() => localStorage.getItem('belkin_user_ai_model') || '');
+  const [localUrl, setLocalUrl] = useState(() => localStorage.getItem('belkin_user_ai_url') || '');
+
+  useEffect(() => {
+    if (isOpen) {
+      setLocalProvider(localStorage.getItem('belkin_user_ai_provider') || 'gemini');
+      setLocalKey(localStorage.getItem('belkin_user_ai_key') || '');
+      setLocalModel(localStorage.getItem('belkin_user_ai_model') || '');
+      setLocalUrl(localStorage.getItem('belkin_user_ai_url') || '');
+    }
+  }, [isOpen]);
+
   
   // Style and Wallpaper local state
   const [localStyle, setLocalStyle] = useState<AppArchetypeStyle>(appStyle);
@@ -191,48 +206,18 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
 
   
   const handleApplyFeed = () => {
-    if (selectedFeedIndex < 0 || selectedFeedIndex >= localFeeds.length || !feedName.trim()) return localFeeds;
-    
-    let updated = [...localFeeds];
-    const tags = feedHashtagsText.split('\n').map(t => t.trim()).filter(Boolean);
-    let generatedUrl = '';
-    
-    if (feedType === 'youtube') {
-      generatedUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(feedSearchQuery.trim())}`;
-    } else if (feedType === 'pikabu') {
-      generatedUrl = `https://pikabu.ru/tag/${encodeURIComponent(feedSearchQuery.trim() || 'Ремонт техники')}/hot`;
-    } else if (feedType === '4pda') {
-      generatedUrl = 'https://4pda.to/feed/';
-    } else if (feedType === 'reddit') {
-      generatedUrl = 'https://www.reddit.com/r/mobilerepair/.rss';
-    } else {
-      generatedUrl = feedSearchQuery.trim().startsWith('http') ? feedSearchQuery.trim() : `https://${feedSearchQuery.trim()}`;
-    }
-    
-    const currentFeed = updated[selectedFeedIndex] as any;
-    updated[selectedFeedIndex] = {
-      ...currentFeed,
-      name: feedName.trim(),
-      title: feedName.trim(),
-      category: currentFeed.category || 'Инженерия',
-      sources: [
-        {
-          id: (currentFeed.sources && currentFeed.sources[0]?.id) || `src-${Date.now()}`,
-          name: feedName.trim(),
-          type: feedType as any,
-          url: generatedUrl,
-          query: feedSearchQuery.trim(),
-          searchQuery: feedSearchQuery.trim(),
-          keywords: tags,
-          hashtags: tags,
-          enabled: true
-        }
-      ]
-    };
-    
-    setLocalFeeds(updated);
-    onPlaySound?.('click');
-    return updated;
+    // The FeedConfigEditor updates localFeeds in real-time.
+    // We just return it for consistency.
+    onPlaySound?.('success');
+    return localFeeds;
+  };
+
+  
+  const handleUpdateSelectedFeed = (updatedFeed: FeedConfig) => {
+    if (selectedFeedIndex < 0 || selectedFeedIndex >= localFeeds.length) return;
+    const newFeeds = [...localFeeds];
+    newFeeds[selectedFeedIndex] = updatedFeed;
+    setLocalFeeds(newFeeds);
   };
 
   const handleSaveAll = () => {
@@ -636,63 +621,19 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                 )}
               </div>
 
-              {/* Form Input 1: Тип */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1">
-                <label className="text-slate-300 w-32 shrink-0 font-bold">Тип:</label>
-                <select
-                  value={feedType}
-                  onChange={(e) => setFeedType(e.target.value as any)}
-                  className="flex-1 bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8] cursor-pointer"
-                >
-                  <option value="youtube">youtube</option>
-                  <option value="rss">rss</option>
-                  <option value="4pda">4pda</option>
-                  <option value="pikabu">pikabu</option>
-                  <option value="telegram">telegram</option>
-                  <option value="reddit">reddit</option>
-                </select>
-              </div>
-
-              {/* Form Input 2: Название */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <label className="text-slate-300 w-32 shrink-0 font-bold">Название:</label>
-                <input
-                  type="text"
-                  value={feedName}
-                  onChange={(e) => setFeedName(e.target.value)}
-                  placeholder="Например: FRP, Android микропайка, Apple..."
-                  className="flex-1 bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8]"
-                />
-              </div>
-
-              {/* Form Input 3: Поисковый запрос */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <label className="text-slate-300 w-32 shrink-0 font-bold">Поисковый запрос:</label>
-                <input
-                  type="text"
-                  value={feedSearchQuery}
-                  onChange={(e) => setFeedSearchQuery(e.target.value)}
-                  placeholder="Фраза, которую программа вводит в поиск"
-                  className="flex-1 bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8]"
-                />
-              </div>
-              <div className="text-[10px] text-slate-500 pl-0 sm:pl-34 -mt-1">
-                Не URL. Фраза, которую программа вводит в поиск {feedType.toUpperCase()}.
-              </div>
-
-              {/* Form Input 4: Хэштеги источника (Многострочное поле как на скрине) */}
-              <div className="flex flex-col sm:flex-row gap-2 pt-1">
-                <label className="text-slate-300 w-32 shrink-0 font-bold pt-1">Хэштеги источника:</label>
-                <textarea
-                  value={feedHashtagsText}
-                  onChange={(e) => setFeedHashtagsText(e.target.value)}
-                  rows={4}
-                  placeholder={'Honor FRP\nHuawei FRP\nOppo FRP\nRealme FRP\nVivo FRP'}
-                  className="flex-1 bg-[#05080c] border border-[#1e3a5f] rounded p-2 text-slate-100 text-xs font-mono focus:outline-hidden focus:border-[#38bdf8] leading-relaxed"
-                />
-              </div>
+              
+              {localFeeds.length > 0 && selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length ? (
+                <div className="bg-[#09111c] border border-[#1e3a5f] rounded-xl p-3 sm:p-4 mt-4">
+                  <FeedConfigEditor 
+                    feed={localFeeds[selectedFeedIndex]} 
+                    onChange={handleUpdateSelectedFeed}
+                    onPlaySound={onPlaySound}
+                  />
+                </div>
+              ) : null}
 
               {/* Control Buttons Row matching engineering buttons */}
+
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2">
                 <button
                   onClick={handleAddNewFeed}
@@ -760,6 +701,72 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
           {activeTab === '✦ AI-РЕДАКТОР' && (
             <div className="space-y-4 animate-in fade-in duration-100 font-mono text-xs">
               
+              
+              {/* AI Provider Config */}
+              <div className="p-3 bg-[#0d1622] border border-[#1e3a5f] rounded-lg space-y-3">
+                <div className="text-white font-bold flex items-center gap-1.5">
+                  <Database className="w-4 h-4 text-sky-400" />
+                  <span>Настройки провайдера ИИ</span>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-slate-400 text-[10px] uppercase tracking-wider">Провайдер</label>
+                    <select
+                      value={localProvider}
+                      onChange={(e) => {
+                        setLocalProvider(e.target.value);
+                        if (e.target.value === 'openrouter') setLocalUrl('https://openrouter.ai/api/v1');
+                        else if (e.target.value === 'openai') setLocalUrl('https://api.openai.com/v1');
+                        else setLocalUrl('');
+                      }}
+                      className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2 text-slate-200 text-xs focus:outline-hidden"
+                    >
+                      <option value="gemini">Google Gemini</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="custom">Custom (OpenAI-compatible)</option>
+                    </select>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-slate-400 text-[10px] uppercase tracking-wider">Модель</label>
+                    <input
+                      type="text"
+                      value={localModel}
+                      onChange={(e) => setLocalModel(e.target.value)}
+                      placeholder={localProvider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-3.5-turbo'}
+                      className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2 text-slate-200 text-xs focus:outline-hidden"
+                    />
+                  </div>
+                  
+                  <div className="space-y-1 sm:col-span-2">
+                    <label className="text-slate-400 text-[10px] uppercase tracking-wider">API Ключ (Сохраняется локально)</label>
+                    <input
+                      type="password"
+                      value={localKey}
+                      onChange={(e) => setLocalKey(e.target.value)}
+                      placeholder="sk-..."
+                      className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2 text-slate-200 text-xs focus:outline-hidden"
+                    />
+                  </div>
+                  
+                  {localProvider !== 'gemini' && (
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-slate-400 text-[10px] uppercase tracking-wider">Base URL</label>
+                      <input
+                        type="text"
+                        value={localUrl}
+                        onChange={(e) => setLocalUrl(e.target.value)}
+                        placeholder="https://api.openai.com/v1"
+                        className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2 text-slate-200 text-xs focus:outline-hidden"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+
               {/* Quota Saving Mode Toggle */}
               <div className="p-3 bg-[#0d1622] border border-[#1e3a5f] rounded-lg flex items-center justify-between gap-3">
                 <div className="space-y-1">

@@ -259,6 +259,7 @@ export default function App() {
               ...source,
               keywords: [...(source.keywords || []), ...(feed.keywords || [])],
               excludeKeywords: [...(source.excludeKeywords || []), ...(feed.excludeKeywords || [])],
+              keywordMode: source.keywordMode || feed.keywordMode || 'ANY',
               feedId: feed.id,
               feedTitle: feed.name,
               feedCategory: feed.category
@@ -281,19 +282,51 @@ export default function App() {
       const seenLinks = new Set<string>();
       const seenTitles = new Set<string>();
 
+      function normalizeUrl(u: string) {
+        if (!u) return '';
+        try {
+          const parsed = new URL(u);
+          // Ignore hash, protocol, www, and query (unless youtube)
+          let host = parsed.hostname.replace(/^www\./, '');
+          let path = parsed.pathname.replace(/\/$/, '');
+          if (host.includes('youtube.com') && parsed.searchParams.has('v')) {
+            path += '?v=' + parsed.searchParams.get('v');
+          }
+          return host + path;
+        } catch {
+          return u.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
+        }
+      }
+
+      function normalizeTitle(t: string) {
+        if (!t) return '';
+        try {
+          return t.normalize('NFKC').toLowerCase().replace(/[^a-z0-9а-яё]/gi, '');
+        } catch {
+          return t.toLowerCase().replace(/[^a-z0-9а-яё]/gi, '');
+        }
+      }
+
       // Read state
       const currentKeys = new Set<string>();
       articles.forEach((a) => {
-        if (a.title) currentKeys.add(a.title.trim().toLowerCase());
-        if (a.link) currentKeys.add(a.link.trim().toLowerCase());
+        if (a.title) currentKeys.add(normalizeTitle(a.title));
+        if (a.link) currentKeys.add(normalizeUrl(a.link));
       });
 
       rawArticles.forEach((art, idx) => {
-        const l = art.link || '';
-        const t = (art.title || '').toLowerCase().trim();
-        if (currentKeys.has(t) || currentKeys.has(l) || seenLinks.has(l) || seenTitles.has(t)) {
+        const l = normalizeUrl(art.link || '');
+        const t = normalizeTitle(art.title || '');
+        
+        if (
+          (t && currentKeys.has(t)) || 
+          (l && currentKeys.has(l)) || 
+          (l && seenLinks.has(l)) || 
+          (t && seenTitles.has(t))
+        ) {
           return;
         }
+        
         if (l) seenLinks.add(l);
         if (t) seenTitles.add(t);
         
@@ -332,7 +365,7 @@ export default function App() {
         setRefreshStatusMessage('Ленты успешно синхронизированы!');
 
         // Trigger AI formatting & Russian translation for new articles ONLY if auto-processing is enabled
-        const unformatted = uniqueNewArticles.filter(a => a.feedId !== 'search-results' && (!a.summaryOneLine || !a.summaryThreeLines)).slice(0, 15);
+        const unformatted = uniqueNewArticles.filter(a => a.feedId !== 'search-results' && (!(a.ai?.summaryOneLine || a.summaryOneLine) || !(a.ai?.summaryThreeLines || a.summaryThreeLines))).slice(0, 15);
         if (enableAutoAiProcessing && unformatted.length > 0) {
           setRefreshStatusMessage(`ИИ-транслятор: Адаптация и перевод ${unformatted.length} новых карточек...`);
           const processed = await aiProcessArticles(unformatted, customAiPrompt);
@@ -345,11 +378,11 @@ export default function App() {
                 if (p) {
                   return {
                     ...c,
-                    titleRu: p.titleRu || c.titleRu || c.title,
-                    summaryOneLine: p.summaryOneLine || c.summaryOneLine,
-                    summaryThreeLines: p.summaryThreeLines || c.summaryThreeLines,
-                    detailedContent: p.detailedContent || c.detailedContent,
-                    keyTerms: p.keyTerms || c.keyTerms,
+                    titleRu: p.ai?.titleRu || c.ai?.titleRu || c.titleRu || c.title,
+                    summaryOneLine: p.ai?.summaryOneLine || c.ai?.summaryOneLine || c.summaryOneLine,
+                    summaryThreeLines: p.ai?.summaryThreeLines || c.ai?.summaryThreeLines || c.summaryThreeLines,
+                    detailedContent: p.ai?.detailedContent || c.ai?.detailedContent || c.detailedContent,
+                    keyTerms: p.ai?.keyTerms || c.ai?.keyTerms || c.keyTerms,
                   };
                 }
                 return c;
@@ -402,7 +435,7 @@ export default function App() {
       const matchedArticlesCount: string[] = [];
 
       articlesToVerify.forEach((art) => {
-        const hasTitleRu = !!art.titleRu && art.titleRu !== art.title;
+        const hasTitleRu = !!(art.ai?.titleRu || art.titleRu) && (art.ai?.titleRu || art.titleRu) !== art.title;
         const hasOneLine = !!art.summaryOneLine && art.summaryOneLine.length >= 15;
         const hasThreeLines = !!art.summaryThreeLines && art.summaryThreeLines.length >= 40;
         const detailedText = art.detailedContent || art.content || '';
@@ -442,11 +475,11 @@ export default function App() {
             if (p) {
               return {
                 ...c,
-                titleRu: p.titleRu || c.titleRu || c.title,
-                summaryOneLine: p.summaryOneLine || c.summaryOneLine,
-                summaryThreeLines: p.summaryThreeLines || c.summaryThreeLines,
-                detailedContent: p.detailedContent || c.detailedContent,
-                keyTerms: p.keyTerms || c.keyTerms,
+                titleRu: p.ai?.titleRu || c.ai?.titleRu || c.titleRu || c.title,
+                summaryOneLine: p.ai?.summaryOneLine || c.ai?.summaryOneLine || c.summaryOneLine,
+                summaryThreeLines: p.ai?.summaryThreeLines || c.ai?.summaryThreeLines || c.summaryThreeLines,
+                detailedContent: p.ai?.detailedContent || c.ai?.detailedContent || c.detailedContent,
+                keyTerms: p.ai?.keyTerms || c.ai?.keyTerms || c.keyTerms,
                 aiSentiment: p.aiSentiment || 'analytical',
               };
             }
@@ -465,7 +498,7 @@ export default function App() {
 
       let movedCount = 0;
       finalArticles = finalArticles.map((art) => {
-        const textToSearch = `${art.title} ${art.titleRu || ''} ${art.contentSnippet || ''} ${art.link || ''} ${art.categories?.join(' ') || ''}`.toLowerCase();
+        const textToSearch = `${art.title} ${(art.ai?.titleRu || art.titleRu) || ''} ${art.contentSnippet || ''} ${art.link || ''} ${art.categories?.join(' ') || ''}`.toLowerCase();
         
         // Find best matching configured feed source
         let matchedFeed = feeds.find(f => f.id === art.feedId);
@@ -493,7 +526,7 @@ export default function App() {
 
         if (matchedFeed && matchedFeed.id !== art.feedId) {
           movedCount++;
-          logToServer('info', `Статья "${art.titleRu || art.title}" перемещена в источник [${matchedFeed.title}] (категория: ${matchedFeed.category})`);
+          logToServer('info', `Статья "${(art.ai?.titleRu || art.titleRu) || art.title}" перемещена в источник [${matchedFeed.title}] (категория: ${matchedFeed.category})`);
           return {
             ...art,
             feedId: matchedFeed.id,

@@ -293,10 +293,10 @@ export const ArticleReaderPane: React.FC<ArticleReaderPaneProps> = ({
           </div>
 
           <h1 className="text-xl md:text-2xl lg:text-3xl font-extrabold text-slate-100 tracking-tight leading-tight">
-            {article.titleRu || article.title}
+            {(article.ai?.titleRu || article.titleRu) || article.title}
           </h1>
 
-          {article.titleRu && article.titleRu !== article.title && (
+          {(article.ai?.titleRu || article.titleRu) && (article.ai?.titleRu || article.titleRu) !== article.title && (
             <p className="text-xs text-slate-400 italic">Оригинал: {article.title}</p>
           )}
 
@@ -315,7 +315,7 @@ export const ArticleReaderPane: React.FC<ArticleReaderPaneProps> = ({
         </header>
 
         {/* Manual on-demand AI translation & diagnostic template adaptation */}
-        {(!article.summaryOneLine || article.titleRu === article.title) && onAdaptArticle && (
+        {(!(article.ai?.summaryOneLine || article.summaryOneLine) || (article.ai?.titleRu || article.titleRu) === article.title) && onAdaptArticle && (
           <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-inner font-sans">
             <div className="space-y-1">
               <div className="font-bold text-xs text-slate-200 flex items-center gap-1.5">
