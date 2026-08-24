@@ -5,6 +5,68 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { XMLParser } from "fast-xml-parser";
 
+import dns from 'dns/promises';
+
+async function isUrlSafeForSsrf(urlString: string): Promise<boolean> {
+  try {
+    const parsed = new URL(urlString);
+    
+    // Only allow HTTP/HTTPS
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    
+    const hostname = parsed.hostname.toLowerCase();
+    
+    // Explicitly blocked hostnames
+    if (hostname === 'localhost' || hostname === 'metadata.google.internal' || hostname.includes('metadata')) {
+      return false;
+    }
+
+    // Attempt to resolve the hostname to check if it points to a private IP
+    // Note: This isn't bulletproof against DNS rebinding, but it's a good first layer for a Node.js app
+    const ips = await dns.resolve(hostname).catch(() => []);
+    
+    // Function to check if an IP is private/reserved
+    const isPrivateIp = (ip: string) => {
+      // IPv4 checks
+      if (ip.startsWith('127.')) return true; // loopback
+      if (ip.startsWith('10.')) return true; // class A
+      if (ip.startsWith('192.168.')) return true; // class C
+      if (ip.startsWith('169.254.')) return true; // link-local (metadata endpoints)
+      if (ip.startsWith('0.')) return true; // current network
+      
+      // Class B (172.16.0.0 to 172.31.255.255)
+      if (ip.startsWith('172.')) {
+        const secondOctet = parseInt(ip.split('.')[1], 10);
+        if (secondOctet >= 16 && secondOctet <= 31) return true;
+      }
+      
+      // IPv6 checks (simple)
+      if (ip === '::1' || ip.toLowerCase().startsWith('fc00:') || ip.toLowerCase().startsWith('fd00:') || ip.toLowerCase().startsWith('fe80:')) {
+        return true;
+      }
+      return false;
+    };
+
+    // If the hostname itself is a raw IP, check it
+    if (isPrivateIp(hostname)) {
+       return false;
+    }
+
+    // Check resolved IPs
+    for (const ip of ips) {
+      if (isPrivateIp(ip)) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
 const app = express();
 const PORT = 3000;
 
@@ -62,6 +124,7 @@ class OpenAICompatibleProvider implements AIProvider {
   }
 
   async generateContent({ systemInstruction, prompt, responseSchema, model = "gpt-3.5-turbo" }: any) {
+    if (!(await isUrlSafeForSsrf(this.baseUrl))) throw new Error('SSRF Blocked');
     const res = await fetch(this.baseUrl, {
       method: "POST",
       headers: {
@@ -502,84 +565,141 @@ function parseHtmlArticles(html: string, siteUrl: string, feedId: string, limit 
   const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
   const siteTitle = titleMatch ? titleMatch[1].trim() : new URL(siteUrl).hostname;
 
-  // Regex pattern for finding news/article blocks
-  const articleRegex = /<(?:article|div|li|section)[^>]*class=["'][^"']*(?:post|item|news|story|card|entry|article)[^"']*["'][^>]*>([\s\S]*?)<\/(?:article|div|li|section)>/gi;
-  let match;
-  let count = 0;
-
-  while ((match = articleRegex.exec(html)) !== null && count < limit) {
-    const block = match[1];
-    
-    // Find title and link
-    const linkMatch = block.match(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
-    if (!linkMatch) continue;
-
-    let href = linkMatch[1];
-    if (href.startsWith('/')) href = `${siteOrigin}${href}`;
-    if (!href.startsWith('http')) continue;
-
-    const rawHeading = stripHtml(linkMatch[2]);
-    if (!rawHeading || rawHeading.length < 8 || rawHeading.length > 250) continue;
-
-    const snippet = stripHtml(block).replace(rawHeading, '').trim().slice(0, 240);
-    const blockImgs = findAllImagesInContent(block, {}, siteOrigin);
-
-    articles.push({
-      id: `${feedId || 'html'}-${count}-${encodeURIComponent(href).slice(0, 32)}`,
-      feedId: feedId || 'html',
-      feedTitle: siteTitle,
-      title: rawHeading,
-      link: href,
-      pubDate: 'Свежее',
-      isoDate: new Date().toISOString(),
-      author: siteTitle,
-      content: snippet || rawHeading,
-      contentSnippet: snippet || rawHeading,
-      imageUrl: blockImgs[0] || undefined,
-      imageUrls: blockImgs,
-      categories: ['Новости'],
-      isRead: false,
-      isStarred: false,
-    });
-    count++;
+  // --- Pipeline 1: JSON-LD Extraction ---
+  const jsonLdMatches = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  if (jsonLdMatches) {
+    for (const match of jsonLdMatches) {
+      try {
+        const inner = match.match(/>([\s\S]*?)<\/script>/i);
+        if (inner) {
+          const data = JSON.parse(inner[1].trim());
+          const items = Array.isArray(data) ? data : (data['@graph'] ? data['@graph'] : (data.itemListElement ? data.itemListElement : [data]));
+          
+          for (const item of items) {
+            let articleObj = item;
+            if (item['@type'] === 'ListItem' && item.item) {
+              articleObj = item.item;
+            }
+            
+            if (articleObj['@type'] === 'Article' || articleObj['@type'] === 'NewsArticle' || articleObj['@type'] === 'BlogPosting') {
+              if (articles.length >= limit) break;
+              
+              const title = stripHtml(articleObj.headline || articleObj.name || '');
+              let link = typeof articleObj.url === 'string' ? articleObj.url : (articleObj.mainEntityOfPage ? (typeof articleObj.mainEntityOfPage === 'string' ? articleObj.mainEntityOfPage : articleObj.mainEntityOfPage['@id']) : '');
+              if (link && link.startsWith('/')) link = `${siteOrigin}${link}`;
+              
+              const desc = stripHtml(articleObj.description || articleObj.articleBody || '');
+              let img = undefined;
+              if (articleObj.image) {
+                if (typeof articleObj.image === 'string') img = articleObj.image;
+                else if (Array.isArray(articleObj.image)) img = typeof articleObj.image[0] === 'string' ? articleObj.image[0] : articleObj.image[0].url;
+                else if (articleObj.image.url) img = articleObj.image.url;
+              }
+              
+              if (title && link) {
+                articles.push({
+                  id: `${feedId || 'html'}-${articles.length}-${encodeURIComponent(link).slice(0, 32)}`,
+                  feedId: feedId || 'html',
+                  feedTitle: siteTitle,
+                  title: title,
+                  link: link,
+                  pubDate: articleObj.datePublished || 'Свежее',
+                  isoDate: articleObj.datePublished ? new Date(articleObj.datePublished).toISOString() : new Date().toISOString(),
+                  author: articleObj.author ? (typeof articleObj.author === 'string' ? articleObj.author : articleObj.author.name) : siteTitle,
+                  content: desc || title,
+                  contentSnippet: desc || title,
+                  imageUrl: img,
+                  imageUrls: img ? [img] : [],
+                  categories: ['Новости'],
+                  isRead: false,
+                  isStarred: false,
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    }
   }
 
-  // If no block matched, fallback to finding <h2|h3> links
+  // --- Pipeline 2: Regex extraction (fallback) ---
   if (articles.length === 0) {
-    const hRegex = /<(?:h2|h3)[^>]*>\s*<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>\s*<\/(?:h2|h3)>/gi;
-    let hMatch;
-    while ((hMatch = hRegex.exec(html)) !== null && articles.length < limit) {
-      let href = hMatch[1];
+    const articleRegex = /<(?:article|div|li|section)[^>]*class=["'][^"']*(?:post|item|news|story|card|entry|article)[^"']*["'][^>]*>([\s\S]*?)<\/(?:article|div|li|section)>/gi;
+    let match;
+    let count = 0;
+
+    while ((match = articleRegex.exec(html)) !== null && count < limit) {
+      const block = match[1];
+      
+      const linkMatch = block.match(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+      if (!linkMatch) continue;
+
+      let href = linkMatch[1];
       if (href.startsWith('/')) href = `${siteOrigin}${href}`;
-      const title = stripHtml(hMatch[2]);
-      if (title && title.length > 8) {
+      if (!href.startsWith('http')) continue;
+
+      const rawHeading = stripHtml(linkMatch[2]);
+      if (!rawHeading || rawHeading.length < 8 || rawHeading.length > 250) continue;
+
+      const snippet = stripHtml(block).replace(rawHeading, '').trim().slice(0, 240);
+      const blockImgs = findAllImagesInContent(block, {}, siteOrigin);
+
+      articles.push({
+        id: `${feedId || 'html'}-${count}-${encodeURIComponent(href).slice(0, 32)}`,
+        feedId: feedId || 'html',
+        feedTitle: siteTitle,
+        title: rawHeading,
+        link: href,
+        pubDate: 'Свежее',
+        isoDate: new Date().toISOString(),
+        author: siteTitle,
+        content: snippet || rawHeading,
+        contentSnippet: snippet || rawHeading,
+        imageUrl: blockImgs[0] || undefined,
+        imageUrls: blockImgs,
+        categories: ['Новости'],
+        isRead: false,
+        isStarred: false,
+      });
+      count++;
+    }
+  }
+
+  // --- Pipeline 3: Fallback <a> tag extraction (long texts) ---
+  if (articles.length === 0) {
+    const aRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let match;
+    let count = 0;
+    while ((match = aRegex.exec(html)) !== null && count < limit) {
+      let href = match[1];
+      if (href.startsWith('/')) href = `${siteOrigin}${href}`;
+      if (!href.startsWith('http')) continue;
+      
+      const rawHeading = stripHtml(match[2]);
+      if (rawHeading.length > 30 && rawHeading.split(' ').length > 4) {
         articles.push({
-          id: `${feedId || 'h'}-${articles.length}-${encodeURIComponent(href).slice(0, 32)}`,
-          feedId: feedId || 'h',
+          id: `${feedId || 'html'}-${count}-${encodeURIComponent(href).slice(0, 32)}`,
+          feedId: feedId || 'html',
           feedTitle: siteTitle,
-          title,
+          title: rawHeading,
           link: href,
           pubDate: 'Свежее',
           isoDate: new Date().toISOString(),
           author: siteTitle,
-          content: title,
-          contentSnippet: title,
+          content: rawHeading,
+          contentSnippet: rawHeading,
           imageUrl: undefined,
           imageUrls: [],
           categories: ['Новости'],
           isRead: false,
           isStarred: false,
         });
+        count++;
       }
     }
   }
 
-  return {
-    feedTitle: siteTitle,
-    feedDescription: 'Парсер веб-страницы',
-    feedLink: siteUrl,
-    articles: articles.slice(0, limit),
-  };
+  return { articles: articles.slice(0, limit), feedTitle: siteTitle, feedDescription: 'Парсер веб-страницы', feedLink: siteUrl };
 }
 
 // ----------------------------------------------------
@@ -602,6 +722,7 @@ const sourceAdapterRegistry: Record<string, SourceAdapter> = {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
+        if (!(await isUrlSafeForSsrf(targetUrl))) throw new Error('SSRF Blocked: Invalid URL');
         const res = await fetch(targetUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
           signal: controller.signal
@@ -620,7 +741,8 @@ const sourceAdapterRegistry: Record<string, SourceAdapter> = {
                 title: item.videoRenderer.title.runs[0].text,
                 link: 'https://www.youtube.com/watch?v=' + item.videoRenderer.videoId,
                 contentSnippet: item.videoRenderer.descriptionSnippet?.runs?.map((r: any)=>r.text).join('') || '',
-                pubDate: new Date().toISOString(), // YouTube search doesn't give exact ISO date, just "2 weeks ago" in publishedTimeText
+                pubDate: item.videoRenderer.publishedTimeText?.simpleText || "Неизвестно",
+                isoDate: new Date().toISOString(),
                 guid: item.videoRenderer.videoId,
                 imageUrl: item.videoRenderer.thumbnail?.thumbnails?.[0]?.url || '',
                 author: item.videoRenderer.ownerText?.runs?.[0]?.text || ''
@@ -682,7 +804,8 @@ const sourceAdapterRegistry: Record<string, SourceAdapter> = {
                title: item.title,
                link: item.link,
                contentSnippet: item.snippet || '',
-               pubDate: item.date ? new Date(item.date).toISOString() : new Date().toISOString(),
+               pubDate: item.date || "Свежее",
+               isoDate: new Date().toISOString(),
                guid: item.link,
                author: author
              });
@@ -713,6 +836,39 @@ function normalizeText(text?: string): string {
   } catch (e) {
     return text.toLowerCase().trim().replace(/\s+/g, ' ');
   }
+}
+
+
+
+
+
+async function enrichArticlesWithFullText(articles: any[]) {
+  const batchSize = 10;
+  for (let i = 0; i < articles.length; i += batchSize) {
+    const batch = articles.slice(i, i + batchSize);
+    await Promise.all(batch.map(async (article) => {
+      try {
+        const currentText = (article.content || article.contentSnippet || '').trim();
+        if (currentText.length < 1500 && article.link && /^https?:\/\//i.test(article.link)) {
+          if (!article.link.includes('youtube.com/') && !article.link.includes('youtu.be/')) {
+            const scraped = await scrapeWebArticle(article.link);
+            if (scraped.text && scraped.text.length > currentText.length) {
+              article.content = scraped.text;
+              if (currentText.length < 50) {
+                 article.contentSnippet = scraped.text.slice(0, 300) + '...';
+              }
+            }
+            if (scraped.images && scraped.images.length > 0) {
+              article.imageUrls = [...(article.imageUrls || []), ...scraped.images];
+              if (!article.imageUrl) article.imageUrl = scraped.images[0];
+            }
+          }
+        }
+      } catch (e) {
+      }
+    }));
+  }
+  return articles;
 }
 
 function applyKeywordsFilter(articles: any[], keywords?: string[], excludeKeywords?: string[], keywordMode: 'ANY' | 'ALL' = 'ANY') {
@@ -768,6 +924,7 @@ app.post("/api/rss/fetch", async (req, res) => {
   if (adapter) {
     try {
       scrapedArticles = await adapter.fetch({ url, searchQuery, limit,  });
+      await enrichArticlesWithFullText(scrapedArticles);
       const filteredScraped = applyKeywordsFilter(scrapedArticles, keywords, excludeKeywords, keywordMode).slice(0, limit);
       res.json({
         title: title || type || "Поиск",
@@ -809,6 +966,7 @@ app.post("/api/rss/fetch", async (req, res) => {
     const timeout = setTimeout(() => controller.abort(), 12000);
 
     addLog("info", `Загрузка сырого контента (HTTP GET): ${cleanUrl}`);
+    if (!(await isUrlSafeForSsrf(cleanUrl))) throw new Error('SSRF Blocked: Invalid URL');
     const response = await fetch(cleanUrl, {
       headers: {
         "User-Agent":
@@ -873,6 +1031,7 @@ app.post("/api/rss/fetch", async (req, res) => {
 
         addLog("info", `Обнаружена ссылка на альтернативный RSS поток в HTML заголовке: ${realRssUrl}`);
         try {
+          if (!(await isUrlSafeForSsrf(realRssUrl))) throw new Error('SSRF Blocked: Invalid URL');
           const subResp = await fetch(realRssUrl, {
             headers: {
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (PulseDesk RSS Reader)",
@@ -905,6 +1064,7 @@ app.post("/api/rss/fetch", async (req, res) => {
         for (const p of probePaths) {
           try {
             addLog("info", `Проверка пути: ${origin}${p}`);
+            if (!(await isUrlSafeForSsrf(`${origin}${p}`))) throw new Error('SSRF Blocked: Invalid URL');
             const probeResp = await fetch(`${origin}${p}`, {
               headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
             });
@@ -933,6 +1093,7 @@ app.post("/api/rss/fetch", async (req, res) => {
       }
     }
 
+    await enrichArticlesWithFullText(parsedResult.articles);
     const finalArticles = applyKeywordsFilter(parsedResult.articles, keywords, excludeKeywords, keywordMode);
     addLog("info", `Успешно завершено обновление ленты для ${cleanUrl}. Итог: ${finalArticles.length} статей после фильтрации.`);
 
@@ -977,6 +1138,7 @@ app.post("/api/rss/discover", async (req, res) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 9000);
 
+    if (!(await isUrlSafeForSsrf(targetUrl))) throw new Error('SSRF Blocked: Invalid URL');
     const response = await fetch(targetUrl, {
       headers: {
         "User-Agent":
@@ -1116,10 +1278,12 @@ app.post("/api/ai/discover-feeds", async (req, res) => {
 // ----------------------------------------------------
 // Helper: Web Article Scraper for Deep Summarization
 // ----------------------------------------------------
+
 async function scrapeWebArticle(url: string): Promise<{ text: string; images: string[]; title?: string }> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
+    if (!(await isUrlSafeForSsrf(url))) throw new Error('SSRF Blocked: Invalid OPML URL');
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -1134,19 +1298,83 @@ async function scrapeWebArticle(url: string): Promise<{ text: string; images: st
     const html = decodeBufferText(buffer, response.headers.get('content-type'));
     const origin = new URL(url).origin;
 
-    // Title
-    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const title = titleMatch ? stripHtml(titleMatch[1]) : undefined;
-
-    // Images
-    const images = findAllImagesInContent(html, {}, origin);
-
-    // Main text
     let mainContent = '';
-    const articleTagMatch = html.match(/<(?:article|main)[^>]*>([\s\S]*?)<\/(?:article|main)>/i);
-    if (articleTagMatch) {
-      mainContent = stripHtml(articleTagMatch[1]);
-    } else {
+    let title = undefined;
+    let images: string[] = [];
+
+    // 1. JSON-LD Extraction
+    const jsonLdMatches = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+    if (jsonLdMatches) {
+      for (const match of jsonLdMatches) {
+        try {
+          const inner = match.match(/>([\s\S]*?)<\/script>/i);
+          if (inner) {
+            const data = JSON.parse(inner[1].trim());
+            const items = Array.isArray(data) ? data : (data['@graph'] ? data['@graph'] : [data]);
+            for (const item of items) {
+              if (item['@type'] === 'Article' || item['@type'] === 'NewsArticle' || item['@type'] === 'BlogPosting') {
+                if (item.headline && !title) title = stripHtml(String(item.headline));
+                if (item.articleBody) {
+                  mainContent = stripHtml(String(item.articleBody));
+                } else if (item.text) {
+                  mainContent = stripHtml(String(item.text));
+                }
+                if (item.image) {
+                  if (typeof item.image === 'string') images.push(item.image);
+                  else if (Array.isArray(item.image)) images.push(...item.image.map(i => typeof i === 'string' ? i : i.url).filter(Boolean));
+                  else if (item.image.url) images.push(item.image.url);
+                }
+                if (mainContent.length > 200) break;
+              }
+            }
+          }
+        } catch (e) {}
+        if (mainContent.length > 200) break;
+      }
+    }
+
+    // 2. article/main Extraction
+    if (!mainContent || mainContent.length < 200) {
+      const articleTagMatch = html.match(/<(?:article|main)[^>]*>([\s\S]*?)<\/(?:article|main)>/i);
+      if (articleTagMatch) {
+        mainContent = stripHtml(articleTagMatch[1]);
+      }
+    }
+
+    // 3. OpenGraph Extraction
+    if (!mainContent || mainContent.length < 200) {
+      const ogDescMatch = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i) || 
+                          html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i);
+      if (ogDescMatch) {
+        mainContent = stripHtml(ogDescMatch[1]);
+      }
+    }
+    
+    // Fallback for title
+    if (!title) {
+      const ogTitleMatch = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i) || 
+                           html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
+      if (ogTitleMatch) {
+        title = stripHtml(ogTitleMatch[1]);
+      } else {
+        const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+        title = titleMatch ? stripHtml(titleMatch[1]) : undefined;
+      }
+    }
+
+    // Fallback for images
+    if (images.length === 0) {
+      const ogImgMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i) || 
+                         html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+      if (ogImgMatch) {
+        let ogImg = ogImgMatch[1];
+        if (ogImg.startsWith('/')) ogImg = `${origin}${ogImg}`;
+        images.push(ogImg);
+      }
+    }
+
+    // 4. Paragraph Extraction
+    if (!mainContent || mainContent.length < 200) {
       const pMatches = html.match(/<p[^>]*>[\s\S]*?<\/p>/gi);
       if (pMatches) {
         mainContent = pMatches.map(p => stripHtml(p)).filter(t => t.length > 30).join('\n\n');
@@ -1154,6 +1382,9 @@ async function scrapeWebArticle(url: string): Promise<{ text: string; images: st
         mainContent = stripHtml(html).slice(0, 6000);
       }
     }
+
+    const otherImages = findAllImagesInContent(html, {}, origin);
+    images = [...new Set([...images, ...otherImages])];
 
     return { text: mainContent.slice(0, 10000), images, title };
   } catch {

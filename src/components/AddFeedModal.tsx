@@ -19,6 +19,7 @@ import {
   Zap
 } from 'lucide-react';
 import { CURATED_FEED_PRESETS } from '../data/curatedFeeds';
+import { FeedConfigEditor } from './FeedConfigEditor';
 import { FeedConfig, AIDiscoveredFeed } from '../types';
 import { aiDiscoverFeeds, discoverFeedsFromUrl, parseOpmlText } from '../utils/feedApi';
 
@@ -64,6 +65,29 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
   // OPML state
   const [opmlText, setOpmlText] = useState('');
   const [parsedOpmlFeeds, setParsedOpmlFeeds] = useState<Array<{ title: string; url: string; category: string }>>([]);
+
+  const [customFeed, setCustomFeed] = useState<FeedConfig>({
+    id: `custom-${Date.now()}`,
+    name: '',
+    category: customCategories[0] || 'Технологии & Разработка',
+    description: '',
+    sources: [],
+    enabled: true,
+    keywords: [],
+    excludeKeywords: [],
+    keywordMode: 'ANY'
+  });
+
+  const handleCustomAdd = () => {
+    if (!customFeed.name.trim() || !customFeed.sources?.length) {
+      alert("Укажите название ленты и добавьте хотя бы один источник!");
+      return;
+    }
+    const feedToAdd = { ...customFeed };
+    onAddFeed(feedToAdd);
+    onClose();
+  };
+
 
   if (!isOpen) return null;
 
@@ -248,7 +272,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
             }`}
           >
             <Globe className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Прямая ссылка</span>
+            <span>Создать свою</span>
           </button>
 
           <button
@@ -566,75 +590,37 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
             </div>
           )}
 
-          {/* TAB 4: MANUAL RSS/ATOM ENTRY */}
+                    {/* TAB 4: MANUAL RSS/ATOM ENTRY -> CUSTOM FEED */}
           {activeTab === 'manual' && (
-            <form onSubmit={handleManualAdd} className="space-y-4 max-w-lg mx-auto py-2">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  URL адрес RSS / Atom потока <span className="text-rose-400">*</span>
-                </label>
-                <input
-                  type="url"
-                  required
-                  placeholder="https://example.com/rss.xml"
-                  value={manualUrl}
-                  onChange={(e) => setManualUrl(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-100 focus:outline-none focus:border-amber-500"
+            <div className="space-y-4 max-w-2xl mx-auto py-2">
+              <div className="mb-4">
+                <h3 className="font-bold text-slate-100 text-sm mb-1 flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-emerald-400" />
+                  Конструктор пользовательской ленты
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Создайте гибкую ленту с множеством источников (RSS, YouTube, Reddit и др.), объединив их общими фильтрами и ключевыми словами.
+                </p>
+              </div>
+              
+              <div className="p-4 bg-slate-900/50 border border-slate-700/50 rounded-xl">
+                <FeedConfigEditor 
+                  feed={customFeed} 
+                  onChange={(updated) => setCustomFeed(updated)} 
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Название источника (опционально)
-                </label>
-                <input
-                  type="text"
-                  placeholder="Например: Мой любимый блог"
-                  value={manualTitle}
-                  onChange={(e) => setManualTitle(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-100 focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Категория / Папка рабочего стола
-                </label>
-                <select
-                  value={manualCategory}
-                  onChange={(e) => setManualCategory(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-100 focus:outline-none focus:border-amber-500"
-                >
-                  {customCategories.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                  <option value="Другое">Другое</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Описание (опционально)
-                </label>
-                <textarea
-                  placeholder="Краткая заметка об источнике..."
-                  value={manualDescription}
-                  onChange={(e) => setManualDescription(e.target.value)}
-                  className="w-full h-16 px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-100 focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div className="pt-3">
+              <div className="pt-3 sticky bottom-0 bg-slate-900/90 py-3 border-t border-slate-800">
                 <button
-                  type="submit"
-                  className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl transition cursor-pointer shadow-md"
+                  type="button"
+                  onClick={handleCustomAdd}
+                  className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl transition cursor-pointer shadow-md flex items-center justify-center gap-2"
                 >
-                  Добавить ленту в рабочий стол
+                  <Plus className="w-4 h-4" />
+                  Создать ленту
                 </button>
               </div>
-            </form>
+            </div>
           )}
 
           {/* TAB 5: OPML IMPORT */}

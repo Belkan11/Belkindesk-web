@@ -21,6 +21,7 @@ export async function fetchFeedArticles(feed: any, limit = 50): Promise<FeedFetc
         searchQuery: feed.query || feed.searchQuery,
         keywords: feed.keywords,
         excludeKeywords: feed.excludeKeywords,
+        keywordMode: feed.keywordMode,
         category: feed.feedCategory || feed.category,
         title: feed.feedTitle || feed.title || feed.name
       }),

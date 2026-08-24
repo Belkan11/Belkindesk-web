@@ -29,9 +29,9 @@ import {
   Globe,
   Compass
 , Database } from 'lucide-react';
-import { FeedConfig, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle } from '../types';
+import { FeedConfig, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle, UserProfile } from '../types';
 import { MEDICAL_FEEDS, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS, CURATED_FEED_PRESETS } from '../data/curatedFeeds';
-import { INITIAL_MEDICAL_TIMERS } from '../utils/storage';
+import { INITIAL_MEDICAL_TIMERS, saveAISettings } from '../utils/storage';
 import { 
   getStoredCity, 
   getStoredTimeZone, 
@@ -70,6 +70,8 @@ interface ControlCenterModalProps {
   onTriggerRefresh?: (overrideFeeds?: FeedConfig[]) => void;
   isRefreshing?: boolean;
   onPlaySound?: (type: 'click' | 'success' | 'star') => void;
+  currentUser?: UserProfile;
+  onUpdateUserDetails?: (profile: UserProfile) => void;
 }
 
 export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
@@ -95,6 +97,8 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   onTriggerRefresh,
   isRefreshing = false,
   onPlaySound,
+  currentUser,
+  onUpdateUserDetails,
 }) => {
   const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [localScale, setLocalScale] = useState<number>(() => {
@@ -245,6 +249,9 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       
       localStorage.setItem('belkin_weather_city', localCity);
       localStorage.setItem('belkin_weather_tz', localTimeZone);
+
+      // AI Settings
+      saveAISettings(localProvider, localKey, localModel, localUrl, currentUser || null, onUpdateUserDetails);
       
       setSavedSuccess(true);
       onPlaySound?.('ping');

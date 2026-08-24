@@ -763,3 +763,33 @@ export function markArticlesAsSeen(idsOrTitles: string[]) {
 
 
 
+
+export function saveAISettings(
+  provider: string,
+  key: string,
+  model: string,
+  url: string,
+  currentUser: UserProfile | null,
+  updateProfileCallback?: (profile: UserProfile) => void
+) {
+  // 1. Save to localStorage
+  localStorage.setItem('belkin_user_ai_provider', provider);
+  if (key.trim()) {
+    localStorage.setItem('belkin_user_ai_key', key.trim());
+  } else {
+    localStorage.removeItem('belkin_user_ai_key');
+  }
+  localStorage.setItem('belkin_user_ai_model', model.trim());
+  localStorage.setItem('belkin_user_ai_url', url.trim());
+
+  // 2. Sync to UserProfile if available
+  if (currentUser && updateProfileCallback) {
+    updateProfileCallback({
+      ...currentUser,
+      aiProvider: provider as any,
+      aiApiKey: key.trim(),
+      aiModel: model.trim(),
+      aiUrl: url.trim(),
+    });
+  }
+}

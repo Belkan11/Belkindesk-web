@@ -272,6 +272,7 @@ export interface UserProfile {
   aiProvider?: 'gemini' | 'openai' | 'openrouter' | 'custom';
   aiApiKey?: string;
   aiModel?: string;
+  aiUrl?: string;
 }
 
 export interface AIDiscoveredFeed {

@@ -277,16 +277,16 @@ export default function App() {
       }
 
       setRefreshStatusMessage('Скрейпинг всех источников завершен. Фильтрация дубликатов...');
-      // Deduplication across all fetched articles based on canonical URL or title
+      // Deduplication across all fetched articles based on canonical URL, title, or content hash
       const uniqueNewArticles: Article[] = [];
       const seenLinks = new Set<string>();
       const seenTitles = new Set<string>();
+      const seenContents = new Set<string>();
 
       function normalizeUrl(u: string) {
         if (!u) return '';
         try {
           const parsed = new URL(u);
-          // Ignore hash, protocol, www, and query (unless youtube)
           let host = parsed.hostname.replace(/^www\./, '');
           let path = parsed.pathname.replace(/\/$/, '');
           if (host.includes('youtube.com') && parsed.searchParams.has('v')) {
@@ -307,28 +307,46 @@ export default function App() {
         }
       }
 
+      function generateContentHash(c: string) {
+        if (!c || c.length < 50) return ''; // Ignore very short content for hashing
+        // Strip HTML, normalize spaces, lowercase, take first 400 characters for the hash
+        const stripped = c.replace(/<[^>]*>?/gm, '').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
+        try {
+          return stripped.normalize('NFKC').toLowerCase().replace(/[^a-z0-9а-яё]/gi, '').slice(0, 400);
+        } catch {
+          return stripped.toLowerCase().replace(/[^a-z0-9а-яё]/gi, '').slice(0, 400);
+        }
+      }
+
       // Read state
       const currentKeys = new Set<string>();
+      const currentContents = new Set<string>();
       articles.forEach((a) => {
         if (a.title) currentKeys.add(normalizeTitle(a.title));
         if (a.link) currentKeys.add(normalizeUrl(a.link));
+        const cHash = generateContentHash(a.content || a.contentSnippet || '');
+        if (cHash) currentContents.add(cHash);
       });
 
       rawArticles.forEach((art, idx) => {
         const l = normalizeUrl(art.link || '');
         const t = normalizeTitle(art.title || '');
+        const cHash = generateContentHash(art.content || art.contentSnippet || '');
         
         if (
           (t && currentKeys.has(t)) || 
           (l && currentKeys.has(l)) || 
+          (cHash && currentContents.has(cHash)) ||
           (l && seenLinks.has(l)) || 
-          (t && seenTitles.has(t))
+          (t && seenTitles.has(t)) ||
+          (cHash && seenContents.has(cHash))
         ) {
           return;
         }
         
         if (l) seenLinks.add(l);
         if (t) seenTitles.add(t);
+        if (cHash) seenContents.add(cHash);
         
         uniqueNewArticles.push({
           ...art,
@@ -1144,6 +1162,8 @@ export default function App() {
         scheduledHours={scheduledHours}
         onChangeScheduledHours={handleUpdateScheduledHours}
         onTriggerRefresh={handleRefresh}
+        currentUser={currentUser}
+        onUpdateUserDetails={handleSaveProfile}
         isRefreshing={isRefreshing}
         onPlaySound={playUiSound}
       />
