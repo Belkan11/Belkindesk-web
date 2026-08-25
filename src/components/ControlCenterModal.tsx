@@ -779,10 +779,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                 <div className="space-y-1">
                   <div className="text-white font-bold flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-amber-400" />
-                    <span>Энергосбережение лимитов ИИ (Anti-Quota Exhaustion)</span>
+                    <span>Автоматическая AI-обработка новых новостей</span>
                   </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    При отключении автоматического ИИ-перевода новые ленты синхронизируются мгновенно без запросов к Gemini, исключая ошибку 429 (Resource Exhausted). Перевод и суммаризацию можно вызывать вручную для нужных статей.
+                    При отключении автоматической AI-обработки новые ленты загружаются мгновенно без запросов к AI. Обработку можно запускать вручную для нужных статей.
                   </p>
                 </div>
                 <button
@@ -797,7 +797,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                   }`}
                 >
                   <span className={`w-2 h-2 rounded-full ${enableAutoAiProcessing ? 'bg-slate-950 animate-ping' : 'bg-slate-500'}`} />
-                  <span>{enableAutoAiProcessing ? 'Авто-ИИ: ВКЛ' : 'ЭКО-режим: ВКЛ'}</span>
+                  <span>{enableAutoAiProcessing ? 'ВКЛ' : 'ВЫКЛ'}</span>
                 </button>
               </div>
 

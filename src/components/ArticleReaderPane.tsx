@@ -320,10 +320,10 @@ export const ArticleReaderPane: React.FC<ArticleReaderPaneProps> = ({
             <div className="space-y-1">
               <div className="font-bold text-xs text-slate-200 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>Энергосбережение: карточка без ИИ-обработки</span>
+                <span>Новость ожидает AI-обработки</span>
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed max-w-xl">
-                Для сохранения лимитов ИИ автоматический перевод отключен. Вы можете вручную перевести статью, создать выжимку и заполнить карту ремонта.
+                Вы можете вручную перевести статью, создать выжимку и извлечь данные с помощью AI.
               </p>
             </div>
             <button
@@ -332,7 +332,7 @@ export const ArticleReaderPane: React.FC<ArticleReaderPaneProps> = ({
               className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 text-slate-950 disabled:text-slate-500 font-bold text-xs rounded-lg transition shrink-0 cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>{isRefreshing ? 'Обработка...' : 'Адаптировать с ИИ'}</span>
+              <span>{isRefreshing ? 'Обработка...' : 'Обработать AI'}</span>
             </button>
           </div>
         )}
@@ -471,13 +471,33 @@ export const ArticleReaderPane: React.FC<ArticleReaderPaneProps> = ({
           }`}
         >
           {article.content && article.content.includes('<') ? (
-            <div
-              className="prose prose-invert max-w-none prose-p:leading-relaxed prose-a:text-amber-400 prose-img:rounded-xl"
-              dangerouslySetInnerHTML={{ __html: article.content }}
-            />
+            <>
+              <div
+                className="prose prose-invert max-w-none prose-p:leading-relaxed prose-a:text-amber-400 prose-img:rounded-xl"
+                dangerouslySetInnerHTML={{ __html: article.content }}
+              />
+              {article.extractionStatus === 'partial' && (
+                <div className="mt-6 text-xs font-mono text-amber-400 bg-amber-500/10 p-3 rounded border border-amber-500/20">
+                  ⚠ Статья была загружена лишь частично (ограничения сайта или структуры). Полный текст доступен в оригинальном источнике.
+                </div>
+              )}
+            </>
           ) : (
             <div className="space-y-4">
               <p>{article.contentSnippet || article.content}</p>
+              
+              {article.extractionStatus === 'partial' && (
+                <div className="text-xs font-mono text-amber-400 bg-amber-500/10 p-3 rounded border border-amber-500/20">
+                  ⚠ Статья была загружена лишь частично (ограничения сайта или структуры).
+                </div>
+              )}
+              
+              {article.extractionStatus === 'failed' && (
+                <div className="text-xs font-mono text-rose-400 bg-rose-500/10 p-3 rounded border border-rose-500/20">
+                  ⚠ Не удалось загрузить полный текст (Scraping Blocked). {article.extractionError ? `Ошибка: ${article.extractionError}` : ''}
+                </div>
+              )}
+              
               <p className="text-slate-400 italic">
                 Полный текст статьи и интерактивные медиа-материалы доступны на официальном сайте источника.
               </p>

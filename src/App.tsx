@@ -424,7 +424,7 @@ export default function App() {
       setIsRefreshing(false);
       setRefreshStatusMessage('');
     }
-  }, [feeds, customAiPrompt, playUiSound, articles]);
+  }, [feeds, customAiPrompt, playUiSound, articles, enableAutoAiProcessing]);
 
   // AI Reprocessing of current articles manually
   const handleReprocessAllArticles = useCallback(async () => {

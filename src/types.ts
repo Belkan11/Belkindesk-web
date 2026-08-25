@@ -48,6 +48,8 @@ export interface Article {
   keyTerms?: string[];
   imageUrl?: string;
   imageUrls?: string[];
+  extractionStatus?: 'full' | 'partial' | 'failed';
+  extractionError?: string;
   categories?: string[];
   matchedKeywords?: string[];
   isRead?: boolean;

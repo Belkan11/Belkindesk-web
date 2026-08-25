@@ -361,7 +361,7 @@ function decodeBufferText(buffer: ArrayBuffer, contentTypeHeader: string | null)
     if (xmlEncMatch && xmlEncMatch[1]) {
       encoding = xmlEncMatch[1].toLowerCase();
     }
-  } catch {}
+  } catch (e) {}
 
   try {
     const decoder = new TextDecoder(encoding);
@@ -743,7 +743,7 @@ const sourceAdapterRegistry: Record<string, SourceAdapter> = {
                 link: 'https://www.youtube.com/watch?v=' + item.videoRenderer.videoId,
                 contentSnippet: item.videoRenderer.descriptionSnippet?.runs?.map((r: any)=>r.text).join('') || '',
                 pubDate: item.videoRenderer.publishedTimeText?.simpleText || "Неизвестно",
-                isoDate: new Date().toISOString(),
+                isoDate: parseRelativeDateToIso(item.videoRenderer.publishedTimeText?.simpleText || ''),
                 guid: item.videoRenderer.videoId,
                 imageUrl: item.videoRenderer.thumbnail?.thumbnails?.[0]?.url || '',
                 author: item.videoRenderer.ownerText?.runs?.[0]?.text || ''
@@ -806,7 +806,7 @@ const sourceAdapterRegistry: Record<string, SourceAdapter> = {
                link: item.link,
                contentSnippet: item.snippet || '',
                pubDate: item.date || "Свежее",
-               isoDate: new Date().toISOString(),
+               isoDate: parseRelativeDateToIso(item.date || ''),
                guid: item.link,
                author: author
              });
@@ -835,6 +835,44 @@ const sourceAdapterRegistry: Record<string, SourceAdapter> = {
 
 
 
+// Helper: Parse relative strings ("2 years ago", "3 дня назад") to approximate ISO Date string
+function parseRelativeDateToIso(text: string): string {
+  if (!text) return new Date().toISOString();
+  const trimmed = text.trim().toLowerCase();
+  
+  // Try direct parsing first for standard formats
+  const parsedMillis = Date.parse(text);
+  if (!isNaN(parsedMillis)) {
+    return new Date(parsedMillis).toISOString();
+  }
+
+  const now = new Date();
+  
+  // Extract all numbers
+  const numMatch = trimmed.match(/(\d+)/);
+  const amount = numMatch ? parseInt(numMatch[1], 10) : 1;
+  
+  if (trimmed.includes('second') || trimmed.includes('секунд')) {
+    now.setSeconds(now.getSeconds() - amount);
+  } else if (trimmed.includes('minute') || trimmed.includes('минут')) {
+    now.setMinutes(now.getMinutes() - amount);
+  } else if (trimmed.includes('hour') || trimmed.includes('час')) {
+    now.setHours(now.getHours() - amount);
+  } else if (trimmed.includes('day') || trimmed.includes('ден') || trimmed.includes('дня') || trimmed.includes('дне')) {
+    now.setDate(now.getDate() - amount);
+  } else if (trimmed.includes('week') || trimmed.includes('недел')) {
+    now.setDate(now.getDate() - (amount * 7));
+  } else if (trimmed.includes('month') || trimmed.includes('месяц')) {
+    now.setMonth(now.getMonth() - amount);
+  } else if (trimmed.includes('year') || trimmed.includes('год') || trimmed.includes('лет')) {
+    now.setFullYear(now.getFullYear() - amount);
+  } else if (trimmed.includes('yesterday') || trimmed.includes('вчера')) {
+    now.setDate(now.getDate() - 1);
+  }
+  
+  return now.toISOString();
+}
+
 async function enrichArticlesWithFullText(articles: any[]) {
   const batchSize = 10;
   for (let i = 0; i < articles.length; i += batchSize) {
@@ -842,7 +880,14 @@ async function enrichArticlesWithFullText(articles: any[]) {
     await Promise.all(batch.map(async (article) => {
       try {
         const currentText = (article.content || article.contentSnippet || '').trim();
-        if (currentText.length < 1500 && article.link && /^https?:\/\//i.test(article.link)) {
+        
+        // Some RSS feeds put a large snippet or even entire layout fragments in description, 
+        // but rarely the actual full article text. We raise the threshold to 5000 to catch these.
+        // Also if we suspect it's an RSS snippet (contains '...', 'read more', etc) we can scrape.
+        const looksLikeSnippet = currentText.includes('...') || currentText.includes('[...]') || currentText.includes('Читать далее');
+        const shouldScrape = (currentText.length < 5000 || looksLikeSnippet) && article.link && /^https?:\/\//i.test(article.link);
+        
+        if (shouldScrape) {
           if (!article.link.includes('youtube.com/') && !article.link.includes('youtu.be/')) {
             const scraped = await scrapeWebArticle(article.link);
             if (scraped.text && scraped.text.length > currentText.length) {
@@ -854,6 +899,12 @@ async function enrichArticlesWithFullText(articles: any[]) {
             if (scraped.images && scraped.images.length > 0) {
               article.imageUrls = [...(article.imageUrls || []), ...scraped.images];
               if (!article.imageUrl) article.imageUrl = scraped.images[0];
+            }
+            
+            // Map extraction statuses from previous fix
+            article.extractionStatus = scraped.extractionStatus;
+            if (scraped.extractionError) {
+              article.extractionError = scraped.extractionError;
             }
           }
         }
@@ -1231,7 +1282,99 @@ app.post("/api/ai/discover-feeds", async (req, res) => {
 // Helper: Web Article Scraper for Deep Summarization
 // ----------------------------------------------------
 
-async function scrapeWebArticle(url: string): Promise<{ text: string; images: string[]; title?: string }> {
+// ----------------------------------------------------
+// Helper: Deterministic Readability Heuristic Extractor
+// ----------------------------------------------------
+function extractArticleUsingReadabilityHeuristics(html: string): { text: string; score: number } {
+  try {
+    // 1. Pre-clean noisy and non-content elements
+    let doc = html
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '')
+      .replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, '')
+      .replace(/<header[^>]*>([\s\S]*?)<\/header>/gi, '')
+      .replace(/<footer[^>]*>([\s\S]*?)<\/footer>/gi, '')
+      .replace(/<nav[^>]*>([\s\S]*?)<\/nav>/gi, '')
+      .replace(/<aside[^>]*>([\s\S]*?)<\/aside>/gi, '')
+      .replace(/<form[^>]*>([\s\S]*?)<\/form>/gi, '')
+      .replace(/<iframe[^>]*>([\s\S]*?)<\/iframe>/gi, '');
+
+    const blocks: Array<{ tag: string; attrs: string; score: number; text: string }> = [];
+    
+    // Match common block containers
+    const tagRegex = /<(div|section|article|p|main|span)([^>]*)>([\s\S]*?)<\/\1>/gi;
+    
+    let match;
+    // Iterate over matches. Though nested tags exist, we can extract all level matching tags 
+    // and let the scoring algorithm rank them.
+    while ((match = tagRegex.exec(doc)) !== null) {
+      const tagName = match[1].toLowerCase();
+      const attrs = match[2] || '';
+      const inner = match[3] || '';
+      const text = stripHtml(inner).trim();
+      
+      if (text.length < 50) continue; // Skip too short chunks
+      
+      let score = text.length; // Base score is character count
+      
+      // Structural weight
+      if (tagName === 'article' || tagName === 'main') score += 1500;
+      if (tagName === 'p') score += 200;
+      if (tagName === 'span') score -= 100;
+      
+      // Attribute keyword weighting
+      const attrsLower = attrs.toLowerCase();
+      const positiveKeywords = ['article', 'content', 'post', 'body', 'entry', 'main', 'story', 'text', 'news', 'journal', 'paper', 'detail'];
+      const negativeKeywords = ['comment', 'sidebar', 'nav', 'footer', 'ad', 'sponsor', 'share', 'promo', 'header', 'menu', 'widget', 'social', 'meta', 'reply', 'related', 'popular', 'recommend', 'author', 'profile', 'banner', 'popup', 'newsletter', 'tags'];
+      
+      for (const word of positiveKeywords) {
+        if (attrsLower.includes(word)) score += 400;
+      }
+      for (const word of negativeKeywords) {
+        if (attrsLower.includes(word)) score -= 500;
+      }
+      
+      // Punctuation and density weighting (high comma/dot ratio means real readable text)
+      const commaCount = (text.split(',').length - 1);
+      const dotCount = (text.split('.').length - 1);
+      const totalChars = text.length;
+      
+      if (totalChars > 0) {
+        const punctuationRatio = (commaCount + dotCount) / totalChars;
+        if (punctuationRatio > 0.015) {
+          score += 300; // Boost for prose density
+        }
+      }
+      
+      // Russian characters check (specific target optimization for BelkinDESK)
+      const russianCharCount = (text.match(/[а-яё]/gi) || []).length;
+      if (russianCharCount > 30) {
+        score += 200;
+      }
+      
+      blocks.push({
+        tag: tagName,
+        attrs,
+        score,
+        text
+      });
+    }
+    
+    if (blocks.length === 0) {
+      return { text: stripHtml(doc).slice(0, 8000), score: 0 };
+    }
+    
+    // Sort by final score descending
+    blocks.sort((a, b) => b.score - a.score);
+    
+    return { text: blocks[0].text, score: blocks[0].score };
+  } catch (e) {
+    console.error('Error in readability extractor:', e);
+    return { text: '', score: 0 };
+  }
+}
+
+async function scrapeWebArticle(url: string): Promise<{ text: string; images: string[]; title?: string; extractionStatus?: 'full' | 'partial' | 'failed'; extractionError?: string }> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
@@ -1244,7 +1387,7 @@ async function scrapeWebArticle(url: string): Promise<{ text: string; images: st
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    if (!response.ok) return { text: '', images: [] };
+    if (!response.ok) return { text: '', images: [], extractionStatus: 'failed', extractionError: `HTTP status ${response.status}` };
 
     const buffer = await response.arrayBuffer();
     const html = decodeBufferText(buffer, response.headers.get('content-type'));
@@ -1325,7 +1468,15 @@ async function scrapeWebArticle(url: string): Promise<{ text: string; images: st
       }
     }
 
-    // 4. Paragraph Extraction
+    // 4. Specialized Deterministic Heuristic Extraction
+    if (!mainContent || mainContent.length < 300) {
+      const heuristic = extractArticleUsingReadabilityHeuristics(html);
+      if (heuristic.text && heuristic.text.length > mainContent.length) {
+        mainContent = heuristic.text;
+      }
+    }
+
+    // 5. Paragraph Extraction
     if (!mainContent || mainContent.length < 200) {
       const pMatches = html.match(/<p[^>]*>[\s\S]*?<\/p>/gi);
       if (pMatches) {
@@ -1338,9 +1489,9 @@ async function scrapeWebArticle(url: string): Promise<{ text: string; images: st
     const otherImages = findAllImagesInContent(html, {}, origin);
     images = [...new Set([...images, ...otherImages])];
 
-    return { text: mainContent.slice(0, 10000), images, title };
+    return { text: mainContent.slice(0, 10000), images, title, extractionStatus: mainContent.length > 200 ? 'full' : 'partial' };
   } catch {
-    return { text: '', images: [] };
+    return { text: '', images: [], extractionStatus: 'failed', extractionError: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -1472,8 +1623,9 @@ app.post("/api/ai/summarize-article", async (req, res) => {
     let articleText = (article.content || article.contentSnippet || '').trim();
     let allImages = Array.isArray(article.imageUrls) ? [...article.imageUrls] : (article.imageUrl ? [article.imageUrl] : []);
 
-    // If text is short (< 300 chars) and link is valid web page, scrape full web page
-    if (articleText.length < 300 && article.link && /^https?:\/\//i.test(article.link)) {
+    // If text is short (< 5000 chars) and link is valid web page, scrape full web page
+    const looksLikeSnippet = articleText.includes('...') || articleText.includes('[...]') || articleText.includes('Читать далее');
+    if ((articleText.length < 5000 || looksLikeSnippet) && article.link && /^https?:\/\//i.test(article.link)) {
       const scraped = await scrapeWebArticle(article.link);
       if (scraped.text && scraped.text.length > articleText.length) {
         articleText = scraped.text;
@@ -1483,6 +1635,9 @@ app.post("/api/ai/summarize-article", async (req, res) => {
           if (!allImages.includes(img)) allImages.push(img);
         });
       }
+      // Log extraction status
+      console.log(`Article ${article.id} extraction: ${scraped.extractionStatus}`, scraped.extractionError ? scraped.extractionError : '');
+
     }
 
     const systemInstruction = `Ты старший эксперт-аналитик, технологический редактор и профессиональный переводчик для BelkinDESK.

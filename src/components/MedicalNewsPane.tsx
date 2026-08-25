@@ -159,9 +159,9 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
       )}
 
       {/* 2. Main Two-Column Layout: Feeds Channels (Left) | News Feed (Right) */}
-      <div className="flex-1 flex gap-2.5 overflow-hidden">
+      <div className="flex-1 flex gap-2 overflow-hidden">
         {/* Left Sub-column: Channels & Categories Filter */}
-        <div className={`w-48 sm:w-56 md:w-60 rounded-xl p-2 overflow-y-auto space-y-1.5 shrink-0 flex flex-col justify-between transition-all ${
+        <div className={`w-32 sm:w-36 md:w-40 rounded-xl p-1.5 overflow-y-auto space-y-1.5 shrink-0 flex flex-col justify-between transition-all ${
           isModern
             ? 'bg-[#0a1020]/60 backdrop-blur-md border border-cyan-500/30 shadow-lg shadow-cyan-950/20'
             : 'bg-[#0e1116] border border-[#2b2518]'
@@ -432,7 +432,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
               /* ============================================================== */
               /* 2. THREE-LINES CARD MODE (Заголовок + 3 строки описания)        */
               /* ============================================================== */
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1 sm:gap-1.5">
                 {filteredArticles.map((art, idx) => {
                   const displayTitle = (art.ai?.titleRu || art.titleRu) || art.title;
                   const displayDesc = (art.ai?.summaryThreeLines || art.summaryThreeLines) || (art.ai?.summaryOneLine || art.summaryOneLine) || art.contentSnippet || '';
@@ -446,10 +446,10 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
                         onToggleRead(art.id);
                         onPlaySound?.('click');
                       }}
-                      className={`group flex flex-col justify-between p-3.5 rounded-xl border transition cursor-pointer relative ${
+                      className={`group flex flex-col justify-between p-2 sm:p-2.5 rounded-lg border transition cursor-pointer relative ${
                         isModern
                           ? !art.isRead
-                            ? 'bg-[#0c162d]/70 backdrop-blur-md border-cyan-500/30 hover:border-cyan-400/70 hover:bg-[#112040]/80 shadow-[0_4px_20px_rgba(0,0,0,0.4)]'
+                            ? 'bg-[#0c162d]/70 backdrop-blur-md border-cyan-500/30 hover:border-cyan-400/70 hover:bg-[#112040]/80 shadow-[0_3px_12px_rgba(0,0,0,0.4)]'
                             : 'bg-[#080e1a]/50 backdrop-blur-md border-cyan-500/15 hover:border-cyan-400/50 opacity-80'
                           : !art.isRead
                           ? 'bg-[#14181f] border-[#2b2518] hover:border-[#ffcc00]/60 hover:bg-[#1a212d]'
@@ -458,36 +458,36 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
                     >
                       <div>
                         {/* Top Card Meta Row */}
-                        <div className="flex items-center justify-between gap-1.5 mb-1.5 text-[10px]">
-                          <div className="flex items-center gap-1.5">
+                        <div className="flex items-center justify-between gap-1 mb-1 text-[9px] sm:text-[10px]">
+                          <div className="flex items-center gap-1">
                             {!art.isRead ? (
                               <span className="w-1.5 h-1.5 rounded-full bg-[#ff4d4d] shrink-0" />
                             ) : (
                               <span className="w-1.5 h-1.5 rounded-full bg-slate-700 shrink-0 opacity-40" />
                             )}
-                            <span className={`font-mono font-bold px-1.5 py-0.5 rounded border ${
+                            <span className={`font-mono font-bold px-1 py-0.5 rounded border text-[9px] ${
                               isModern
                                 ? 'text-cyan-300 bg-cyan-500/10 border-cyan-500/30'
                                 : 'text-[#ffcc00] bg-[#221c12] border-[#3b3220]'
                             }`}>
                               {art.feedTitle}
                             </span>
-                            <span className="text-slate-500 font-mono">{art.pubDate}</span>
+                            <span className="text-slate-500 font-mono truncate max-w-[80px]">{art.pubDate}</span>
                           </div>
 
-                          <div className="flex items-center gap-1 shrink-0">
+                          <div className="flex items-center gap-0.5 shrink-0">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onToggleStar(art.id);
                                 onPlaySound?.('star');
                               }}
-                              className={`p-1 transition cursor-pointer rounded hover:bg-black/40 ${
+                              className={`p-0.5 transition cursor-pointer rounded hover:bg-black/40 ${
                                 art.isStarred ? 'text-[#ffcc00]' : 'text-slate-600 hover:text-slate-400'
                               }`}
                               title={art.isStarred ? 'Убрать из избранного' : 'Добавить в избранное'}
                             >
-                              <Star className={`w-3.5 h-3.5 ${art.isStarred ? 'fill-[#ffcc00]' : ''}`} />
+                              <Star className={`w-3 h-3 ${art.isStarred ? 'fill-[#ffcc00]' : ''}`} />
                             </button>
 
                             <button
@@ -496,28 +496,28 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
                                 e.stopPropagation();
                                 onDeleteArticle(art.id);
                               }}
-                              className="p-1 transition cursor-pointer rounded text-slate-600 hover:text-red-400 hover:bg-black/40"
+                              className="p-0.5 transition cursor-pointer rounded text-slate-600 hover:text-red-400 hover:bg-black/40"
                               title="Удалить карточку новости"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="w-3 h-3" />
                             </button>
                           </div>
                         </div>
 
                         {/* Title & Image Layout */}
-                        <div className="flex gap-2.5 items-start">
+                        <div className="flex gap-1.5 items-start">
                           <div className="flex-1 min-w-0">
-                            <h4 className={`font-sans text-xs sm:text-[13px] font-bold leading-snug transition line-clamp-2 ${isModern ? 'text-slate-100 group-hover:text-cyan-300' : 'text-slate-100 group-hover:text-[#ffcc00]'}`}>
+                            <h4 className={`font-sans text-[10.5px] sm:text-[11.5px] font-bold leading-tight transition line-clamp-2 ${isModern ? 'text-slate-100 group-hover:text-cyan-300' : 'text-slate-100 group-hover:text-[#ffcc00]'}`}>
                               {displayTitle}
                             </h4>
-                            {/* 3-lines description */}
-                            <p className="text-slate-300 font-sans text-[11px] line-clamp-3 mt-1.5 leading-relaxed opacity-85">
+                            {/* 2-lines description for shorter height */}
+                            <p className="text-slate-300 font-sans text-[9.5px] sm:text-[10px] line-clamp-2 mt-0.5 leading-tight opacity-85">
                               {displayDesc}
                             </p>
                           </div>
 
                           {img && (
-                            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded bg-slate-900 border border-[#2b2518] shrink-0 overflow-hidden relative">
+                            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded bg-slate-900 border border-[#2b2518]/60 shrink-0 overflow-hidden relative">
                               <img
                                 src={img}
                                 alt=""
@@ -534,11 +534,11 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
 
                       {/* Bottom Tags / Key Terms */}
                       {(art.ai?.keyTerms || art.keyTerms) && (art.ai?.keyTerms || art.keyTerms).length > 0 && (
-                        <div className="mt-2.5 pt-2 border-t border-[#202632] flex flex-wrap gap-1 items-center">
+                        <div className="mt-1 pt-1 border-t border-[#202632]/40 flex flex-wrap gap-0.5 items-center">
                           {(art.ai?.keyTerms || art.keyTerms).slice(0, 3).map((term, tIdx) => (
                             <span
                               key={tIdx}
-                              className="text-[9px] text-[#ffcc00]/80 bg-[#1c1810] px-1.5 py-0.5 rounded border border-[#3b3220] font-mono"
+                              className="text-[8px] sm:text-[9px] text-[#ffcc00]/80 bg-[#1c1810] px-1 py-0.2 rounded border border-[#3b3220]/60 font-mono"
                             >
                               #{term}
                             </span>
@@ -559,13 +559,13 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
           </div>
 
           {/* Bottom Bar: Starred Filter Toggle */}
-          <div className={`p-2 border-t flex items-center justify-between gap-2 ${isModern ? 'bg-[#0a1020]/80 border-cyan-500/30' : 'bg-[#12161e] border-[#2b2518]'}`}>
+          <div className={`p-1.5 border-t flex items-center justify-between gap-2 ${isModern ? 'bg-[#0a1020]/80 border-cyan-500/30' : 'bg-[#12161e] border-[#2b2518]'}`}>
             <button
               onClick={() => {
                 onToggleStarredFilter(!isStarredFilter);
                 onPlaySound?.('click');
               }}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs transition cursor-pointer font-bold ${
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] sm:text-xs transition cursor-pointer font-bold ${
                 isStarredFilter
                   ? isModern
                     ? 'bg-cyan-500 text-slate-950 font-black shadow-[0_0_10px_rgba(56,189,248,0.5)]'
@@ -575,7 +575,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
                   : 'text-[#d4af37] hover:bg-[#221c12] border border-[#d4af37]/30'
               }`}
             >
-              <Star className="w-3.5 h-3.5 fill-current" />
+              <Star className="w-3 h-3 fill-current" />
               <span>★ Избранное ({starredCount})</span>
             </button>
 
@@ -586,15 +586,15 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
                   onPlaySound?.('click');
                 }}
                 disabled={isRefreshing || articles.length === 0}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[11px] transition cursor-pointer font-bold disabled:opacity-40 disabled:cursor-not-allowed uppercase font-mono shadow-md ${
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] transition cursor-pointer font-bold disabled:opacity-40 disabled:cursor-not-allowed uppercase font-mono shadow-sm ${
                   isModern
                     ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white hover:from-cyan-400 hover:to-indigo-500 shadow-[0_0_12px_rgba(56,189,248,0.4)]'
                     : 'bg-[#ffcc00] text-black hover:bg-[#ffd633]'
                 }`}
-                title="Перераспределить и обработать все сохраненные новости с помощью ИИ согласно вашему промпту"
+                title="Обработать текущие статьи с помощью AI согласно вашему промпту"
               >
-                <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-                <span>Перераспределить и обработать новости</span>
+                <Sparkles className="w-3 h-3 animate-pulse" />
+                <span>Обработать выбранные AI</span>
               </button>
             )}
 
