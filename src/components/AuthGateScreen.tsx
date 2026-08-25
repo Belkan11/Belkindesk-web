@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS } from '../data/curatedFeeds';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { auth, saveUserProfileToFirestore } from '../utils/firebase';
 
 interface AuthGateScreenProps {
   onAuthSuccess?: (userId: string) => void;
@@ -65,23 +67,76 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
     setLoginError(null);
     
     const cleanLogin = loginUsername.trim().toLowerCase();
-    const user = profiles.find(
+    
+    // Find registered email
+    let email = '';
+    const matchedProfile = profiles.find(
       (p) => (p.username && p.username.toLowerCase() === cleanLogin) || 
-             (p.login && p.login.toLowerCase() === cleanLogin)
+             (p.login && p.login.toLowerCase() === cleanLogin) ||
+             (p.email && p.email.toLowerCase() === cleanLogin)
     );
 
-    if (!user) {
-      setLoginError('Пользователь с таким никнеймом не найден');
-      return;
+    if (cleanLogin.includes('@')) {
+      email = cleanLogin;
+    } else if (matchedProfile && matchedProfile.email) {
+      email = matchedProfile.email;
+    } else {
+      email = `${cleanLogin}@local.desk`;
     }
 
-    if (user.password !== loginPassword) {
-      setLoginError('Неверный пароль');
-      return;
-    }
+    try {
+      // Authenticate with Firebase Auth
+      const userCredential = await signInWithEmailAndPassword(auth, email, loginPassword);
+      const uid = userCredential.user.uid;
 
-    onPlaySound?.('success');
-    onAuthSuccess?.(user.id);
+      onPlaySound?.('success');
+      onAuthSuccess?.(uid);
+    } catch (error: any) {
+      console.warn('Firebase login failed, checking legacy credentials:', error);
+
+      // Legacy user migration check
+      const legacyProfile = profiles.find(
+        (p) => ((p.username && p.username.toLowerCase() === cleanLogin) || 
+               (p.login && p.login.toLowerCase() === cleanLogin)) &&
+               p.password === loginPassword
+      );
+
+      if (legacyProfile) {
+        try {
+          // On-the-fly register legacy user in Firebase Auth
+          const userCredential = await createUserWithEmailAndPassword(auth, legacyProfile.email || `${cleanLogin}@local.desk`, loginPassword);
+          const uid = userCredential.user.uid;
+
+          // Migrate and clean profile (remove the raw password)
+          const migratedProfile: UserProfile = {
+            ...legacyProfile,
+            id: uid,
+            updatedAt: new Date().toISOString()
+          };
+          delete migratedProfile.password;
+
+          await saveUserProfileToFirestore(migratedProfile);
+
+          const nextProfiles = profiles.map(p => p.id === legacyProfile.id ? migratedProfile : p);
+          onSetProfiles(nextProfiles);
+
+          onPlaySound?.('success');
+          onAuthSuccess?.(uid);
+          return;
+        } catch (migrationErr: any) {
+          console.error('Legacy migration to Firebase Auth failed:', migrationErr);
+        }
+      }
+
+      // If migration fails or legacy user is not found, show error
+      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        setLoginError('Неверный пароль или логин');
+      } else if (error.code === 'auth/user-not-found') {
+        setLoginError('Пользователь с таким никнеймом или email не найден');
+      } else {
+        setLoginError('Неверный логин/email или пароль');
+      }
+    }
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
@@ -94,6 +149,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       return;
     }
 
+    // Check locally first to prevent client-side overlap
     const exists = profiles.some(
       (p) => (p.username && p.username.toLowerCase() === cleanLogin.toLowerCase()) || 
              (p.login && p.login.toLowerCase() === cleanLogin.toLowerCase())
@@ -104,32 +160,53 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       return;
     }
 
-    const isFirstAdmin = profiles.length === 0 || cleanLogin.toLowerCase() === 'belkin';
-    const newProfile: UserProfile = {
-      id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      username: cleanLogin,
-      login: cleanLogin,
-      email: `${cleanLogin.toLowerCase()}@local.desk`,
-      password: regPassword,
-      displayName: cleanLogin,
-      role: isFirstAdmin ? 'admin' : 'user',
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-      notes: [],
-      timers: [],
-      feeds: [...ENGINEER_DEFAULT_FEEDS],
-      workSchedules: {},
-      accessibility: { scalePercent: 100, visualAcuity: 'Не указывать' },
-      appStyle: 'engineer',
-      customWallpaper: '',
-      customAiPrompt: DEFAULT_AI_PROMPTS.engineer,
-      scheduledHours: [6, 12, 19],
-    };
+    const email = `${cleanLogin.toLowerCase()}@local.desk`;
 
-    const nextProfiles = [...profiles, newProfile];
-    onSetProfiles(nextProfiles);
-    onPlaySound?.('success');
-    onAuthSuccess?.(newProfile.id);
+    try {
+      // Create user in Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(auth, email, regPassword);
+      const uid = userCredential.user.uid;
+
+      const isFirstAdmin = profiles.length === 0 || cleanLogin.toLowerCase() === 'belkin';
+      const newProfile: UserProfile = {
+        id: uid, // Use Firebase Auth user ID as profile ID
+        username: cleanLogin,
+        login: cleanLogin,
+        email: email,
+        displayName: cleanLogin,
+        role: isFirstAdmin ? 'admin' : 'user',
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        notes: [],
+        timers: [],
+        feeds: [...ENGINEER_DEFAULT_FEEDS],
+        workSchedules: {},
+        accessibility: { scalePercent: 100, visualAcuity: 'Не указывать' },
+        appStyle: 'engineer',
+        customWallpaper: '',
+        customAiPrompt: DEFAULT_AI_PROMPTS.engineer,
+        scheduledHours: [6, 12, 19],
+      };
+
+      // Save user profile to Firestore (with no password field)
+      await saveUserProfileToFirestore(newProfile);
+
+      const nextProfiles = [...profiles, newProfile];
+      onSetProfiles(nextProfiles);
+
+      onPlaySound?.('success');
+      onAuthSuccess?.(uid);
+    } catch (error: any) {
+      console.error('Firebase Auth registration failed:', error);
+      if (error.code === 'auth/email-already-in-use') {
+        setRegError('Этот никнейм или email уже занят');
+      } else if (error.code === 'auth/weak-password') {
+        setRegError('Пароль должен быть не менее 6 символов');
+      } else {
+        setRegError('Ошибка регистрации в Firebase. ' + (error.message || ''));
+      }
+    }
   };
 
   return (

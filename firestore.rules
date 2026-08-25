@@ -2,25 +2,39 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // Helper function to verify if the authenticated user is an admin
+    function isAdmin() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
     // User profile, notes, timers, schedules, feeds, and personal workspace data
     // Fully persistent across all deployments and server restarts
     match /users/{userId} {
-      allow read, write: if true;
+      // Only authenticated users can read profiles
+      allow read: if request.auth != null;
+      
+      // Users can write only to their own document, admins can write to any document
+      allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
       
       // Subcollections or nested user data
       match /{allSubcollections=**} {
-        allow read, write: if true;
+        allow read: if request.auth != null;
+        allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
       }
     }
 
     // System configurations, curated feed registries, and app state
     match /system/{document=**} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if request.auth != null;
     }
 
     // Backup snapshots
     match /backups/{document=**} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
   }
 }

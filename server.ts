@@ -1490,7 +1490,7 @@ async function scrapeWebArticle(url: string): Promise<{ text: string; images: st
     images = [...new Set([...images, ...otherImages])];
 
     return { text: mainContent.slice(0, 10000), images, title, extractionStatus: mainContent.length > 200 ? 'full' : 'partial' };
-  } catch {
+  } catch (e: any) {
     return { text: '', images: [], extractionStatus: 'failed', extractionError: e instanceof Error ? e.message : String(e) };
   }
 }
@@ -1914,10 +1914,13 @@ app.post("/api/users/save", (req, res) => {
     return;
   }
 
+  const cleanUser = { ...user };
+  delete cleanUser.password; // CRITICAL SECURITY REMOVAL of plain text password!
+
   const users = loadUsersData();
   users[user.id] = {
     ...users[user.id],
-    ...user,
+    ...cleanUser,
     updatedAt: new Date().toISOString(),
   };
   saveUsersData(users);

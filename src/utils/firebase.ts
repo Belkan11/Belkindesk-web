@@ -87,10 +87,9 @@ export async function saveUserProfileToFirestore(user: UserProfile): Promise<voi
   if (!user || !user.id) return;
   try {
     const userDocRef = doc(db, 'users', user.id);
-    const payload = {
-      ...user,
-      updatedAt: new Date().toISOString(),
-    };
+    const payload = { ...user };
+    delete payload.password; // CRITICAL: Strip plain text password before persisting to Firestore
+    payload.updatedAt = new Date().toISOString();
     await setDoc(userDocRef, payload, { merge: true });
   } catch (err) {
     logFirestoreError('SAVE_USER', `users/${user.id}`, err);
@@ -176,8 +175,4 @@ export async function loadUserDataFromFirestore(userId: string): Promise<UserPro
   return null;
 }
 
-// Legacy stub exports for unused AuthModal.tsx compilation
-export async function loginFirebaseUser(...args: any[]): Promise<any> { return null; }
-export async function registerFirebaseUser(...args: any[]): Promise<any> { return null; }
-export async function logoutFirebaseUser(...args: any[]): Promise<any> { return null; }
-export async function saveUserDataToFirestore(...args: any[]): Promise<any> { return null; }
+// Legacy stubs removed as authentication is fully integrated into AuthGateScreen using native Firebase SDK

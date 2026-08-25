@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './utils/firebase';
+import { HeartPulse } from 'lucide-react';
 import { 
   UserProfile, 
   MedicalNote, 
@@ -33,13 +34,15 @@ import {
   getStoredArticles,
   saveStoredArticles,
   getSeenArticlesList,
-  markArticlesAsSeen
+  markArticlesAsSeen,
+  getTimestampMs
 } from './utils/storage';
 import { 
   saveUserProfileToFirestore, 
   deleteUserProfileFromFirestore, 
   saveBackupSnapshotToFirestore, 
-  subscribeToAllProfiles 
+  subscribeToAllProfiles,
+  loadUserDataFromFirestore
 } from './utils/firebase';
 
 import { MEDICAL_FEEDS, INITIAL_MEDICAL_ARTICLES, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS } from './data/curatedFeeds';
@@ -60,6 +63,7 @@ export default function App() {
   // Profiles and user state
   const [profiles, setProfiles] = useState<UserProfile[]>(() => getStoredProfiles());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => getActiveSessionUserId());
+  const [isProfileLoading, setIsProfileLoading] = useState<boolean>(() => !!getActiveSessionUserId());
   
   // Firebase Auth state
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
@@ -79,7 +83,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<'notes' | 'news'>('news');
   const [notes, setNotes] = useState<MedicalNote[]>(() => currentUser?.notes || getStoredMedicalNotes());
-  const [timers, setTimers] = useState<MedicalTimerItem[]>(() => currentUser?.timers || getStoredMedicalTimers());
+  const [timers, setTimers] = useState<MedicalTimerItem[]>(() => currentUser?.timers || getStoredMedicalTimers(getActiveSessionUserId() || undefined));
   const [bookmarks, setBookmarks] = useState<DesktopBookmark[]>(() => currentUser?.bookmarks || getStoredBookmarks());
   const [accessibility, setAccessibility] = useState<AccessibilityConfig>(() => currentUser?.accessibility || getStoredAccessibility());
 
@@ -178,7 +182,19 @@ export default function App() {
               prev.forEach(p => map.set(p.id, p));
               cloudProfiles.forEach(cp => {
                 const existing = map.get(cp.id);
-                map.set(cp.id, existing ? { ...existing, ...cp } : cp);
+                if (existing) {
+                  const cpTime = getTimestampMs(cp.updatedAt);
+                  const existingTime = getTimestampMs(existing.updatedAt);
+                  if (cpTime > existingTime) {
+                    map.set(cp.id, { ...existing, ...cp });
+                  } else if (existingTime > cpTime) {
+                    // Local is newer, keep existing and skip CP
+                  } else {
+                    map.set(cp.id, { ...existing, ...cp });
+                  }
+                } else {
+                  map.set(cp.id, cp);
+                }
               });
               const next = Array.from(map.values());
               saveStoredProfiles(next);
@@ -198,11 +214,74 @@ export default function App() {
     };
   }, []);
 
+  // Load and Restore User Profile from Firestore on startup (F5) or user login
+  useEffect(() => {
+    if (!activeSessionId) {
+      setIsProfileLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    const loadProfile = async () => {
+      setIsProfileLoading(true);
+      try {
+        const cloudUser = await loadUserDataFromFirestore(activeSessionId);
+        if (!isMounted) return;
+
+        if (cloudUser) {
+          // Sync with Firestore profile
+          setProfiles((prev) => {
+            const existsIndex = prev.findIndex(p => p.id === activeSessionId);
+            let updatedProfiles: UserProfile[];
+            if (existsIndex >= 0) {
+              const existing = prev[existsIndex];
+              const cpTime = getTimestampMs(cloudUser.updatedAt);
+              const existingTime = getTimestampMs(existing.updatedAt);
+              
+              if (existingTime > cpTime) {
+                // Local is strictly newer (e.g. offline edits), use local and sync up to Firestore
+                updatedProfiles = [...prev];
+                syncUserProfileToServer(existing).catch(() => {});
+              } else {
+                // Cloud is newer or equal, use Cloud as source of truth
+                const merged = { ...existing, ...cloudUser };
+                updatedProfiles = [...prev];
+                updatedProfiles[existsIndex] = merged;
+              }
+            } else {
+              updatedProfiles = [...prev, cloudUser];
+            }
+            saveStoredProfiles(updatedProfiles);
+            return updatedProfiles;
+          });
+        } else {
+          // Profile not found in Cloud Firestore. If it exists locally, sync it up
+          const localUser = profiles.find(p => p.id === activeSessionId);
+          if (localUser) {
+            syncUserProfileToServer(localUser).catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.warn('Firestore load profile failed, using local offline fallback:', err);
+      } finally {
+        if (isMounted) {
+          setIsProfileLoading(false);
+        }
+      }
+    };
+
+    loadProfile();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeSessionId]);
+
   // Sync state when active user changes
   useEffect(() => {
-    if (currentUser) {
+    if (currentUser && !isProfileLoading) {
       setNotes(currentUser.notes || getStoredMedicalNotes());
-      setTimers(currentUser.timers || getStoredMedicalTimers());
+      setTimers(currentUser.timers || getStoredMedicalTimers(currentUser.id));
       setBookmarks(currentUser.bookmarks || getStoredBookmarks());
       setFeeds(currentUser.feeds || ENGINEER_DEFAULT_FEEDS);
       setWorkSchedules(currentUser.workSchedules || {});
@@ -216,7 +295,7 @@ export default function App() {
       setLastScheduledSlot(currentUser.lastScheduledSlot);
       setArticles(getStoredArticles(currentUser.id));
     }
-  }, [currentUser?.id]);
+  }, [currentUser?.id, currentUser?.updatedAt, isProfileLoading]);
 
   // Save articles when state changes
   useEffect(() => {
@@ -614,6 +693,7 @@ export default function App() {
             ...currentUser,
             lastScheduledRunDate: todayStr,
             lastScheduledSlot: eligibleSlot,
+            updatedAt: new Date().toISOString(),
           };
           const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
           setProfiles(nextProfiles);
@@ -626,11 +706,11 @@ export default function App() {
 
   // Run on startup when user logs in, and check every 60 seconds
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || isProfileLoading) return;
     checkAndRunSchedule();
     const interval = setInterval(checkAndRunSchedule, 60000);
     return () => clearInterval(interval);
-  }, [currentUser, checkAndRunSchedule]);
+  }, [currentUser, checkAndRunSchedule, isProfileLoading]);
 
   // LOGIN HANDLER
   const handleLogin = (identifier: string, pass: string): { success: boolean; error?: string } => {
@@ -647,7 +727,7 @@ export default function App() {
       return { success: false, error: 'Неверный логин/email или пароль' };
     }
 
-    const updatedUser = { ...found, lastLoginAt: new Date().toISOString() };
+    const updatedUser = { ...found, lastLoginAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     const nextProfiles = profiles.map((p) => (p.id === found.id ? updatedUser : p));
     setProfiles(nextProfiles);
     saveStoredProfiles(nextProfiles);
@@ -702,6 +782,7 @@ export default function App() {
       specialization: specialty?.trim() || 'Инженер-электроник',
       createdAt: new Date().toISOString(),
       lastLoginAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       notes: getStoredMedicalNotes(),
       timers: getStoredMedicalTimers(),
       feeds: ENGINEER_DEFAULT_FEEDS,
@@ -746,7 +827,7 @@ export default function App() {
   const handleUpdateAppStyle = (style: AppArchetypeStyle) => {
     setAppStyle(style);
     if (currentUser?.id) {
-      const updatedUser: UserProfile = { ...currentUser, appStyle: style };
+      const updatedUser: UserProfile = { ...currentUser, appStyle: style, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
@@ -757,7 +838,7 @@ export default function App() {
   const handleUpdateCustomWallpaper = (wallpaper: string) => {
     setCustomWallpaper(wallpaper);
     if (currentUser?.id) {
-      const updatedUser: UserProfile = { ...currentUser, customWallpaper: wallpaper };
+      const updatedUser: UserProfile = { ...currentUser, customWallpaper: wallpaper, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
@@ -768,7 +849,7 @@ export default function App() {
   const handleUpdateCustomAiPrompt = (prompt: string) => {
     setCustomAiPrompt(prompt);
     if (currentUser?.id) {
-      const updatedUser: UserProfile = { ...currentUser, customAiPrompt: prompt };
+      const updatedUser: UserProfile = { ...currentUser, customAiPrompt: prompt, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
@@ -779,7 +860,7 @@ export default function App() {
   const handleUpdateEnableAutoAiProcessing = (enabled: boolean) => {
     setEnableAutoAiProcessing(enabled);
     if (currentUser?.id) {
-      const updatedUser: UserProfile = { ...currentUser, enableAutoAiProcessing: enabled };
+      const updatedUser: UserProfile = { ...currentUser, enableAutoAiProcessing: enabled, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
@@ -790,7 +871,7 @@ export default function App() {
   const handleUpdateScheduledHours = (hours: number[]) => {
     setScheduledHours(hours);
     if (currentUser?.id) {
-      const updatedUser: UserProfile = { ...currentUser, scheduledHours: hours };
+      const updatedUser: UserProfile = { ...currentUser, scheduledHours: hours, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
@@ -803,7 +884,7 @@ export default function App() {
     setNotes(newNotes);
     saveStoredMedicalNotes(newNotes);
     if (currentUser?.id) {
-      const updatedUser = { ...currentUser, notes: newNotes };
+      const updatedUser = { ...currentUser, notes: newNotes, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
@@ -836,9 +917,9 @@ export default function App() {
   // Personal Timers
   const handleUpdateTimers = (newTimers: MedicalTimerItem[]) => {
     setTimers(newTimers);
-    saveStoredMedicalTimers(newTimers);
+    saveStoredMedicalTimers(newTimers, currentUser?.id || undefined);
     if (currentUser?.id) {
-      const updatedUser = { ...currentUser, timers: newTimers };
+      const updatedUser = { ...currentUser, timers: newTimers, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
@@ -851,10 +932,11 @@ export default function App() {
     setAccessibility(newCfg);
     saveStoredAccessibility(newCfg);
     if (currentUser?.id) {
-      const updatedUser = { ...currentUser, accessibility: newCfg };
+      const updatedUser = { ...currentUser, accessibility: newCfg, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
+      syncUserProfileToServer(updatedUser);
     }
   };
 
@@ -896,7 +978,7 @@ export default function App() {
     setBookmarks(newBookmarks);
     saveStoredBookmarks(newBookmarks);
     if (currentUser?.id) {
-      const updatedUser = { ...currentUser, bookmarks: newBookmarks };
+      const updatedUser = { ...currentUser, bookmarks: newBookmarks, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map((p) => (p.id === currentUser.id ? updatedUser : p));
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
@@ -906,19 +988,21 @@ export default function App() {
 
   // User Profile & Cabinet Handlers
   const handleSaveProfile = (updatedProfile: UserProfile) => {
-    const nextProfiles = profiles.map((p) => (p.id === updatedProfile.id ? updatedProfile : p));
+    const profileWithTime = { ...updatedProfile, updatedAt: new Date().toISOString() };
+    const nextProfiles = profiles.map((p) => (p.id === profileWithTime.id ? profileWithTime : p));
     setProfiles(nextProfiles);
     saveStoredProfiles(nextProfiles);
-    syncUserProfileToServer(updatedProfile);
+    syncUserProfileToServer(profileWithTime);
   };
 
   const handleCreateUser = (newUser: UserProfile) => {
-    const nextProfiles = [...profiles, newUser];
+    const userWithTime = { ...newUser, updatedAt: new Date().toISOString() };
+    const nextProfiles = [...profiles, userWithTime];
     setProfiles(nextProfiles);
     saveStoredProfiles(nextProfiles);
-    setActiveSessionId(newUser.id);
-    saveActiveSessionUserId(newUser.id);
-    syncUserProfileToServer(newUser);
+    setActiveSessionId(userWithTime.id);
+    saveActiveSessionUserId(userWithTime.id);
+    syncUserProfileToServer(userWithTime);
   };
 
   const handleSelectUser = (userId: string) => {
@@ -954,7 +1038,7 @@ export default function App() {
 
 
   useEffect(() => {
-    if (!activeSessionId) return;
+    if (!activeSessionId || isProfileLoading) return;
     
     // Function to ping
     const ping = () => {
@@ -970,7 +1054,7 @@ export default function App() {
     ping();
     const interval = setInterval(ping, 60000);
     return () => clearInterval(interval);
-  }, [activeSessionId]);
+  }, [activeSessionId, isProfileLoading]);
 
 
   const handleDeleteUserProfile = (userId: string) => {
@@ -998,6 +1082,44 @@ export default function App() {
       }
     }
   };
+
+  // Show loading screen while profile is being fetched from Firestore or local fallback
+  if (activeSessionId && isProfileLoading) {
+    return (
+      <div className="min-h-screen bg-[#07090c] text-slate-100 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+        {/* Background grid effect */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#161a2215_1px,transparent_1px),linear-gradient(to_bottom,#161a2215_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none opacity-40"></div>
+        
+        <div className="text-center space-y-6 max-w-md w-full relative z-10">
+          <div className="flex justify-center">
+            <div className="relative">
+              {/* Outer spinning ring */}
+              <div className="w-16 h-16 rounded-full border-4 border-emerald-500/20 border-t-emerald-500 animate-spin"></div>
+              {/* Inner glowing pulse icon */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <HeartPulse className="w-6 h-6 text-emerald-400 animate-pulse" />
+              </div>
+            </div>
+          </div>
+          
+          <div className="space-y-2">
+            <h3 className="text-lg font-medium text-slate-200 tracking-wider font-mono">
+              СИНХРОНИЗАЦИЯ ПРОФИЛЯ
+            </h3>
+            <p className="text-xs text-emerald-400 font-mono tracking-widest uppercase">
+              PulseDesk Smart AI
+            </p>
+          </div>
+          
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-3 text-center">
+            <span className="text-xs font-mono text-slate-400">
+              Получение данных из Cloud Firestore...
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // If no user is logged in, show the Clean Auth Modal Window immediately
   if (!activeSessionId || !currentUser) {
@@ -1089,7 +1211,7 @@ export default function App() {
           workSchedules={workSchedules}
           onUpdateWorkSchedules={(updated) => {
             setWorkSchedules(updated);
-            const updatedUser = { ...currentUser, workSchedules: updated };
+            const updatedUser = { ...currentUser, workSchedules: updated, updatedAt: new Date().toISOString() };
             const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
             setProfiles(nextProfiles);
             saveStoredProfiles(nextProfiles);
@@ -1161,13 +1283,13 @@ export default function App() {
         initialTab={controlCenterTab}
         feeds={feeds}
         onUpdateFeeds={(f) => {
+          if (!currentUser?.id) return;
           setFeeds(f);
-          const updatedUser = { ...currentUser, feeds: f };
+          const updatedUser = { ...currentUser, feeds: f, updatedAt: new Date().toISOString() };
           const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
           setProfiles(nextProfiles);
           saveStoredProfiles(nextProfiles);
           syncUserProfileToServer(updatedUser);
-          saveUserProfileToFirestore(updatedUser).catch(() => {});
         }}
         timers={timers}
         onUpdateTimers={handleUpdateTimers}

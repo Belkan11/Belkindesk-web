@@ -276,6 +276,7 @@ export interface UserProfile {
   aiApiKey?: string;
   aiModel?: string;
   aiUrl?: string;
+  updatedAt?: string;
 }
 
 export interface AIDiscoveredFeed {

@@ -154,8 +154,8 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setActiveTab(initialTab || '✦ ИСТОЧНИКИ');
-      setLocalFeeds(Array.isArray(feeds) && feeds.length > 0 ? [...feeds] : [...ENGINEER_DEFAULT_FEEDS]);
-      setLocalTimers(Array.isArray(timers) && timers.length > 0 ? [...timers] : [...INITIAL_MEDICAL_TIMERS]);
+      setLocalFeeds(Array.isArray(feeds) ? [...feeds] : [...ENGINEER_DEFAULT_FEEDS]);
+      setLocalTimers(Array.isArray(timers) ? [...timers] : [...INITIAL_MEDICAL_TIMERS]);
       const s = accessibility?.scalePercent;
       setLocalScale(typeof s === 'number' && [100, 125, 150, 175, 200].includes(s) ? s : 100);
       setLocalAcuity(accessibility?.visualAcuity || 'Не указывать');

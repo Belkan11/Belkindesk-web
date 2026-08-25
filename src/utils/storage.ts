@@ -292,9 +292,10 @@ export function saveStoredMedicalNotes(notes: MedicalNote[]) {
   } catch {}
 }
 
-export function getStoredMedicalTimers(): MedicalTimerItem[] {
+export function getStoredMedicalTimers(userId?: string): MedicalTimerItem[] {
   try {
-    const raw = localStorage.getItem(STORAGE_TIMERS_KEY);
+    const key = userId ? `${STORAGE_TIMERS_KEY}_${userId}` : STORAGE_TIMERS_KEY;
+    const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -314,10 +315,11 @@ export function getStoredMedicalTimers(): MedicalTimerItem[] {
   return INITIAL_MEDICAL_TIMERS;
 }
 
-export function saveStoredMedicalTimers(timers: MedicalTimerItem[]) {
+export function saveStoredMedicalTimers(timers: MedicalTimerItem[], userId?: string) {
   try {
     if (!Array.isArray(timers)) return;
-    localStorage.setItem(STORAGE_TIMERS_KEY, JSON.stringify(timers));
+    const key = userId ? `${STORAGE_TIMERS_KEY}_${userId}` : STORAGE_TIMERS_KEY;
+    localStorage.setItem(key, JSON.stringify(timers));
   } catch {}
 }
 
@@ -499,7 +501,7 @@ export function getStoredProfiles(): UserProfile[] {
             const isAdmin = uLogin.toLowerCase() === 'belkin' || p.id === 'user-admin-belkin';
             
             // Preserve user feeds and settings carefully!
-            const userFeeds = Array.isArray(p.feeds) && p.feeds.length > 0 ? p.feeds : ENGINEER_DEFAULT_FEEDS;
+            const userFeeds = Array.isArray(p.feeds) ? p.feeds : ENGINEER_DEFAULT_FEEDS;
             const style = p.appStyle || 'engineer';
             const aiPrompt = p.customAiPrompt || DEFAULT_AI_PROMPTS[style] || DEFAULT_AI_PROMPTS.engineer;
 
@@ -515,7 +517,7 @@ export function getStoredProfiles(): UserProfile[] {
               appStyle: style,
               customAiPrompt: aiPrompt,
               notes: p.notes || [],
-              timers: p.timers || [],
+              timers: Array.isArray(p.timers) ? p.timers : undefined,
               scheduledHours: p.scheduledHours || [6, 12, 19],
               workSchedules: p.workSchedules || {},
               accessibility: p.accessibility || INITIAL_ACCESSIBILITY,
@@ -532,7 +534,7 @@ export function getStoredProfiles(): UserProfile[] {
           sanitized[adminIdx].username = 'Belkin';
           if (!sanitized[adminIdx].password) sanitized[adminIdx].password = '1511';
           // Ensure feeds are preserved
-          if (!Array.isArray(sanitized[adminIdx].feeds) || sanitized[adminIdx].feeds.length === 0) {
+          if (!Array.isArray(sanitized[adminIdx].feeds)) {
             sanitized[adminIdx].feeds = [...ENGINEER_DEFAULT_FEEDS];
           }
         }
@@ -614,25 +616,45 @@ export function saveStoredCurrentUserId(id: string) {
   } catch {}
 }
 
+export function getTimestampMs(isoString: string | undefined | null): number {
+  if (!isoString) return 0;
+  try {
+    return new Date(isoString).getTime();
+  } catch {
+    return 0;
+  }
+}
+
 export async function syncUserProfileToServer(user: UserProfile) {
   if (!user || !user.id) return;
   
-  // 1. Direct Cloud Firestore save (Permanent cloud storage immune to republishes/rebuilds)
+  if (!user.updatedAt) {
+    user.updatedAt = new Date().toISOString();
+  }
+  const now = user.updatedAt;
+
+  // Save back to local storage profiles to ensure the local profile has this updatedAt!
+  try {
+    const raw = localStorage.getItem(STORAGE_PROFILES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const idx = parsed.findIndex((p: any) => p && p.id === user.id);
+        if (idx !== -1) {
+          parsed[idx] = { ...parsed[idx], ...user, updatedAt: now };
+          localStorage.setItem(STORAGE_PROFILES_KEY, JSON.stringify(parsed));
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to update local profile with updatedAt:', err);
+  }
+  
+  // Direct Cloud Firestore save (Unified Single Source of Truth in the Cloud)
   try {
     await saveUserProfileToFirestore(user);
   } catch (err) {
     console.warn('Direct Firestore save note (cached locally):', err);
-  }
-
-  // 2. Server API sync for backward compatibility
-  try {
-    await fetch('/api/users/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user }),
-    });
-  } catch (err) {
-    // Non-blocking
   }
 }
 
@@ -653,28 +675,49 @@ export async function syncAllProfilesWithFirestore(): Promise<UserProfile[]> {
         if (p.id) mergedMap.set(p.id, p);
       });
 
-      // Merge cloud profiles (local user changes take precedence over default medical feeds)
+      // Merge cloud profiles (using updatedAt for robust conflict resolution)
       cloudProfiles.forEach(cp => {
         if (cp.id) {
           const existing = mergedMap.get(cp.id);
           if (existing) {
-            const cpHasDefaultMedical = Array.isArray(cp.feeds) && (cp.feeds.length > 25 || cp.feeds.some(f => f.sources && f.sources.some(s => s.url && (s.url.includes('who.int') || s.url.includes('scardio.ru')))));
-            const existingHasCustom = Array.isArray(existing.feeds) && existing.feeds.length <= 25;
-            
-            const bestFeeds = (cpHasDefaultMedical && existingHasCustom) ? existing.feeds : ((existing.feeds && existing.feeds.length > 0) ? existing.feeds : (cp.feeds || ENGINEER_DEFAULT_FEEDS));
-            const bestTimers = (cp.timers && cp.timers.length > 0) ? cp.timers : (existing.timers || INITIAL_MEDICAL_TIMERS);
-            const bestNotes = (cp.notes && cp.notes.length > 0) ? cp.notes : (existing.notes || INITIAL_MEDICAL_NOTES);
+            const cpTime = getTimestampMs(cp.updatedAt);
+            const existingTime = getTimestampMs(existing.updatedAt);
 
-            const mergedUser = {
-              ...cp,
-              ...existing,
-              notes: bestNotes,
-              timers: bestTimers,
-              feeds: bestFeeds,
-            };
+            let mergedUser: UserProfile;
+
+            if (cpTime > existingTime) {
+              // Cloud is strictly newer, use Cloud as source of truth
+              mergedUser = {
+                ...existing,
+                ...cp
+              };
+            } else if (existingTime > cpTime) {
+              // Local is strictly newer (e.g. offline changes), use Local as source of truth
+              mergedUser = {
+                ...cp,
+                ...existing
+              };
+              // Push updated local state back to Firestore
+              saveUserProfileToFirestore(mergedUser).catch(() => {});
+            } else {
+              // Timestamps are equal or both missing, use a safe merge with Cloud taking precedence
+              const bestFeeds = Array.isArray(cp.feeds) ? cp.feeds : (Array.isArray(existing.feeds) ? existing.feeds : ENGINEER_DEFAULT_FEEDS);
+              const bestTimers = Array.isArray(cp.timers) ? cp.timers : (Array.isArray(existing.timers) ? existing.timers : INITIAL_MEDICAL_TIMERS);
+              const bestNotes = Array.isArray(cp.notes) ? cp.notes : (Array.isArray(existing.notes) ? existing.notes : INITIAL_MEDICAL_NOTES);
+
+              mergedUser = {
+                ...existing,
+                ...cp,
+                notes: bestNotes,
+                timers: bestTimers,
+                feeds: bestFeeds,
+                updatedAt: cp.updatedAt || existing.updatedAt || new Date().toISOString()
+              };
+              // Sync back to cloud to make sure cloud is updated
+              saveUserProfileToFirestore(mergedUser).catch(() => {});
+            }
+
             mergedMap.set(cp.id, mergedUser);
-            // Push updated state back to Firestore so cloud stays in sync with local customizations
-            saveUserProfileToFirestore(mergedUser).catch(() => {});
           } else {
             mergedMap.set(cp.id, cp);
           }
