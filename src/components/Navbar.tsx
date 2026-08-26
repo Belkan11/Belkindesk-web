@@ -336,8 +336,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <div className="text-slate-400 text-[11px] truncate">{currentUser.email}</div>
               </div>
 
-              {/* Only show profile switcher to admin / belkin */}
-              {(currentUser.role === 'admin' || currentUser.username?.toLowerCase() === 'belkin') && (
+              {/* Only show profile switcher to admin */}
+              {currentUser.role === 'admin' && (
                 <>
                   <div className="px-3 py-1 font-semibold text-slate-400 uppercase tracking-wider text-[10px]">
                     Переключить личный кабинет

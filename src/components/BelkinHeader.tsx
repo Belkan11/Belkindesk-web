@@ -50,7 +50,7 @@ export const BelkinHeader: React.FC<BelkinHeaderProps> = ({
   onPlaySound,
 }) => {
   const cityClock = useCityClock();
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.username?.toLowerCase() === 'belkin';
+  const isAdmin = currentUser?.role === 'admin';
   const isModern = appStyle === 'modern';
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 

@@ -100,7 +100,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       const uid = user.uid;
       const email = user.email || `${uid}@pulsedesk.local`;
       const displayName = user.displayName || user.email?.split('@')[0] || 'Пользователь Google';
-      const isBelkin = email.toLowerCase().includes('belikovich') || email.toLowerCase().includes('belkin') || displayName.toLowerCase() === 'belkin';
 
       let existingProfile = profiles.find(p => p.id === uid);
       if (!existingProfile) {
@@ -111,7 +110,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
           email: email,
           displayName: displayName,
           avatar: user.photoURL || undefined,
-          role: isBelkin ? 'admin' : 'user',
+          role: 'user',
           createdAt: new Date().toISOString(),
           lastLoginAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -382,14 +381,13 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       const userCredential = await createUserWithEmailAndPassword(auth, email, regPassword);
       const uid = userCredential.user.uid;
 
-      const isFirstAdmin = profiles.length === 0 || cleanLogin.toLowerCase() === 'belkin' || email.toLowerCase().includes('belikovich');
       const newProfile: UserProfile = {
         id: uid,
         username: cleanLogin,
         login: cleanLogin,
         email: email,
         displayName: cleanLogin,
-        role: isFirstAdmin ? 'admin' : 'user',
+        role: 'user',
         createdAt: new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -432,7 +430,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
 
       if (isDevMode) {
         // Fallback to local profile registration only in dev mode
-        const isFirstAdmin = profiles.length === 0 || cleanLogin.toLowerCase() === 'belkin' || email.toLowerCase().includes('belikovich');
         const localUid = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const newProfile: UserProfile = {
           id: localUid,
@@ -441,7 +438,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
           email: email,
           password: regPassword,
           displayName: cleanLogin,
-          role: isFirstAdmin ? 'admin' : 'user',
+          role: 'user',
           createdAt: new Date().toISOString(),
           lastLoginAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

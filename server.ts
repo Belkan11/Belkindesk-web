@@ -6,8 +6,16 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { XMLParser } from "fast-xml-parser";
 import { initializeApp, getApps, getApp } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
+import { getAuth, DecodedIdToken } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: DecodedIdToken;
+    }
+  }
+}
 
 import dns from 'dns/promises';
 
@@ -94,6 +102,7 @@ async function deleteUserAiSecret(uid: string): Promise<void> {
 }
 
 async function getVerifiedUid(req: express.Request): Promise<string | null> {
+  if (req.user?.uid) return req.user.uid;
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return null;
@@ -110,55 +119,211 @@ async function getVerifiedUid(req: express.Request): Promise<string | null> {
   }
 }
 
-async function isUrlSafeForSsrf(urlString: string): Promise<boolean> {
+// ----------------------------------------------------
+// Authentication Middlewares (Firebase ID Token & Claims)
+// ----------------------------------------------------
+async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Требуется авторизация (отсутствует Bearer токен)" });
+    return;
+  }
+
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    res.status(401).json({ error: "Недействительный формат токена авторизации" });
+    return;
+  }
+
   try {
-    const parsed = new URL(urlString);
+    if (!getApps().length) {
+      res.status(500).json({ error: "Сервис авторизации Firebase Admin не инициализирован" });
+      return;
+    }
+    const decodedToken = await getAuth(getApp()).verifyIdToken(token);
+    if (!decodedToken || !decodedToken.uid) {
+      res.status(401).json({ error: "Недействительный токен пользователя" });
+      return;
+    }
+    req.user = decodedToken;
+    next();
+  } catch (err: any) {
+    res.status(401).json({ error: "Сессия истекла или токен недействителен" });
+  }
+}
+
+async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
+  await requireAuth(req, res, () => {
+    // Server-side verification: custom claims "admin === true"
+    if (!req.user || req.user.admin !== true) {
+      res.status(403).json({ error: "Доступ запрещён: требуются подтверждённые права администратора (Custom Claim: admin=true)" });
+      return;
+    }
+    next();
+  });
+}
+
+// ----------------------------------------------------
+// Security & Rate Limiters (Sliding/Fixed window per UID / IP)
+// ----------------------------------------------------
+interface RateLimitRecord {
+  count: number;
+  resetTime: number;
+}
+
+function createRateLimiter(options: { maxRequests: number; windowMs: number; limitName: string }) {
+  const store = new Map<string, RateLimitRecord>();
+
+  // Background cleanup
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, val] of store.entries()) {
+      if (now > val.resetTime) {
+        store.delete(key);
+      }
+    }
+  }, Math.max(options.windowMs, 60 * 1000));
+
+  return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
+    const key = req.user?.uid || req.ip || req.socket.remoteAddress || 'anonymous';
+    const now = Date.now();
+
+    const record = store.get(key);
+    if (!record || now > record.resetTime) {
+      store.set(key, {
+        count: 1,
+        resetTime: now + options.windowMs
+      });
+      next();
+      return;
+    }
+
+    if (record.count >= options.maxRequests) {
+      const retryAfterSeconds = Math.ceil((record.resetTime - now) / 1000);
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      res.status(429).json({ 
+        error: `Превышен лимит запросов к ${options.limitName} (лимит: ${options.maxRequests} за ${Math.round(options.windowMs / 1000)} сек). Повторите через ${retryAfterSeconds} сек.`,
+        retryAfter: retryAfterSeconds
+      });
+      return;
+    }
+
+    record.count++;
+    next();
+  };
+}
+
+const aiRateLimiter = createRateLimiter({
+  maxRequests: 60,
+  windowMs: 60 * 1000,
+  limitName: 'AI сервисам'
+});
+
+const rssRateLimiter = createRateLimiter({
+  maxRequests: 120,
+  windowMs: 60 * 1000,
+  limitName: 'RSS/Proxy источникам'
+});
+
+const authSensitiveRateLimiter = createRateLimiter({
+  maxRequests: 30,
+  windowMs: 60 * 1000,
+  limitName: 'сервисам авторизации/учетных данных'
+});
+
+async function isUrlSafeForSsrf(urlString: string): Promise<boolean> {
+  if (!urlString || typeof urlString !== 'string') return false;
+  if (urlString.length > 2048) return false;
+
+  try {
+    const parsed = new URL(urlString.trim());
     
     // Only allow HTTP/HTTPS
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return false;
     }
     
-    const hostname = parsed.hostname.toLowerCase();
+    const hostname = parsed.hostname.toLowerCase().trim();
+    if (!hostname) return false;
     
-    // Explicitly blocked hostnames
-    if (hostname === 'localhost' || hostname === 'metadata.google.internal' || hostname.includes('metadata')) {
+    // Explicitly blocked hostnames & keywords
+    if (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.internal') ||
+      hostname === 'metadata.google.internal' ||
+      hostname.includes('metadata') ||
+      hostname === '169.254.169.254' ||
+      hostname === 'instance-data'
+    ) {
       return false;
     }
 
-    // Attempt to resolve the hostname to check if it points to a private IP
-    // Note: This isn't bulletproof against DNS rebinding, but it's a good first layer for a Node.js app
-    const ips = await dns.resolve(hostname).catch(() => []);
-    
-    // Function to check if an IP is private/reserved
-    const isPrivateIp = (ip: string) => {
+    // Function to check if an IP is private/reserved/loopback/cloud-metadata
+    const isPrivateIp = (rawIp: string): boolean => {
+      const ip = rawIp.trim().toLowerCase();
       // IPv4 checks
       if (ip.startsWith('127.')) return true; // loopback
-      if (ip.startsWith('10.')) return true; // class A
-      if (ip.startsWith('192.168.')) return true; // class C
-      if (ip.startsWith('169.254.')) return true; // link-local (metadata endpoints)
+      if (ip.startsWith('10.')) return true; // class A private
+      if (ip.startsWith('192.168.')) return true; // class C private
+      if (ip.startsWith('169.254.')) return true; // link-local & cloud metadata
       if (ip.startsWith('0.')) return true; // current network
+      if (ip === '255.255.255.255') return true;
+      if (ip.startsWith('100.64.') || ip.startsWith('100.127.')) return true; // Carrier-grade NAT
+      if (ip.startsWith('192.0.0.')) return true; // IETF Protocol Assignments
+      if (ip.startsWith('198.18.') || ip.startsWith('198.19.')) return true; // Benchmark testing
       
-      // Class B (172.16.0.0 to 172.31.255.255)
+      // Class B private (172.16.0.0 to 172.31.255.255)
       if (ip.startsWith('172.')) {
         const secondOctet = parseInt(ip.split('.')[1], 10);
         if (secondOctet >= 16 && secondOctet <= 31) return true;
       }
       
-      // IPv6 checks (simple)
-      if (ip === '::1' || ip.toLowerCase().startsWith('fc00:') || ip.toLowerCase().startsWith('fd00:') || ip.toLowerCase().startsWith('fe80:')) {
+      // IPv6 checks
+      if (
+        ip === '::1' ||
+        ip === '::' ||
+        ip.startsWith('fc') ||
+        ip.startsWith('fd') ||
+        ip.startsWith('fe80:') ||
+        ip.startsWith('::ffff:127.') ||
+        ip.startsWith('::ffff:10.') ||
+        ip.startsWith('::ffff:192.168.') ||
+        ip.startsWith('::ffff:169.254.')
+      ) {
         return true;
       }
+
+      // Check IPv4-mapped IPv6 in 172.16-31 range
+      if (ip.startsWith('::ffff:172.')) {
+        const parts = ip.replace('::ffff:', '').split('.');
+        const secondOctet = parseInt(parts[1], 10);
+        if (secondOctet >= 16 && secondOctet <= 31) return true;
+      }
+
       return false;
     };
 
-    // If the hostname itself is a raw IP, check it
+    // If the hostname itself is an IP, check directly
     if (isPrivateIp(hostname)) {
        return false;
     }
 
-    // Check resolved IPs
-    for (const ip of ips) {
+    // Resolve DNS records to verify resolved destination IP
+    const [ipv4s, ipv6s] = await Promise.all([
+      dns.resolve4(hostname).catch(() => [] as string[]),
+      dns.resolve6(hostname).catch(() => [] as string[])
+    ]);
+
+    const allIps = [...ipv4s, ...ipv6s];
+    if (allIps.length === 0) {
+      // If DNS resolution fails completely for hostname
+      const directIps = await dns.resolve(hostname).catch(() => [] as string[]);
+      allIps.push(...directIps);
+    }
+
+    for (const ip of allIps) {
       if (isPrivateIp(ip)) {
         return false;
       }
@@ -173,7 +338,58 @@ async function isUrlSafeForSsrf(urlString: string): Promise<boolean> {
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: "10mb" }));
+// ----------------------------------------------------
+// Production Security Headers Middleware
+// ----------------------------------------------------
+app.disable('x-powered-by');
+
+app.use((req, res, next) => {
+  // Prevent MIME sniffing
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Referrer Policy
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Frame protection - allow framing only from same origin or AI Studio preview containers
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  // Permissions Policy
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // Cross-Origin-Opener-Policy
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+
+  // CSP: Compatible with AI Studio preview, Google Fonts, and Firebase Web Auth
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://*.firebaseapp.com https://*.googleapis.com",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com data:",
+      "img-src 'self' data: blob: https: http:",
+      "connect-src 'self' https: wss: http:",
+      "frame-src 'self' https://*.firebaseapp.com https://accounts.google.com https://www.youtube.com",
+      "object-src 'none'",
+      "base-uri 'self'"
+    ].join('; ')
+  );
+
+  next();
+});
+
+// JSON Body Parser with strict safe limits per route category
+app.use(express.json({ limit: "5mb" }));
+
+// ----------------------------------------------------
+// Public Health Check Endpoint (No PII / credentials)
+// ----------------------------------------------------
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    app: "BelkinDESK",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    nodeVersion: process.version,
+    memoryUsageMb: Math.round(process.memoryUsage().rss / (1024 * 1024))
+  });
+});
 
 // ----------------------------------------------------
 // AI Provider Abstraction Registry
@@ -314,12 +530,8 @@ function getAiProvider(req?: any): AIProvider {
 // ----------------------------------------------------
 // Secure User AI Credentials API Endpoints
 // ----------------------------------------------------
-app.get("/api/user/ai-credentials", async (req, res) => {
-  const uid = await getVerifiedUid(req);
-  if (!uid) {
-    res.status(401).json({ error: "Не авторизован" });
-    return;
-  }
+app.get("/api/user/ai-credentials", authSensitiveRateLimiter, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
 
   try {
     const secret = await getUserAiSecret(uid);
@@ -332,25 +544,49 @@ app.get("/api/user/ai-credentials", async (req, res) => {
       customPrompt: secret?.customPrompt || '',
     });
   } catch (err: any) {
-    console.error("Error loading user AI credentials:", err);
+    addLog("error", "Error loading user AI credentials");
     res.status(500).json({ error: "Ошибка получения настроек AI" });
   }
 });
 
-app.post("/api/user/ai-credentials", async (req, res) => {
-  const uid = await getVerifiedUid(req);
-  if (!uid) {
-    res.status(401).json({ error: "Не авторизован" });
+app.post("/api/user/ai-credentials", authSensitiveRateLimiter, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
+  const { provider, apiKey, model, url, customPrompt } = req.body;
+
+  // Validate custom base URL against SSRF if provided
+  if (url && typeof url === 'string' && url.trim().length > 0) {
+    const cleanUrl = url.trim();
+    if (cleanUrl.length > 1024) {
+      res.status(400).json({ error: "URL слишком длинный (максимум 1024 символов)" });
+      return;
+    }
+    const isSafe = await isUrlSafeForSsrf(cleanUrl);
+    if (!isSafe) {
+      res.status(400).json({ error: "Недопустимый или небезопасный URL для AI провайдера" });
+      return;
+    }
+  }
+
+  // Length guards on user inputs
+  if (apiKey && typeof apiKey === 'string' && apiKey.length > 512) {
+    res.status(400).json({ error: "API key слишком длинный" });
+    return;
+  }
+  if (customPrompt && typeof customPrompt === 'string' && customPrompt.length > 8000) {
+    res.status(400).json({ error: "Пользовательский системный промпт превышает допустимый размер (8000 символов)" });
     return;
   }
 
-  const { provider, apiKey, model, url, customPrompt } = req.body;
+  const validProviders = ['gemini', 'openai', 'openrouter', 'custom'] as const;
+  const cleanProvider = (typeof provider === 'string' && validProviders.includes(provider as any))
+    ? (provider as 'gemini' | 'openai' | 'openrouter' | 'custom')
+    : undefined;
 
   try {
     await saveUserAiSecret(uid, {
-      provider,
+      provider: cleanProvider,
       apiKey: apiKey !== undefined ? String(apiKey).trim() : undefined,
-      model: model !== undefined ? String(model).trim() : undefined,
+      model: model !== undefined ? String(model).trim().slice(0, 100) : undefined,
       url: url !== undefined ? String(url).trim() : undefined,
       customPrompt: customPrompt !== undefined ? String(customPrompt).trim() : undefined,
     });
@@ -365,23 +601,19 @@ app.post("/api/user/ai-credentials", async (req, res) => {
       customPrompt: updated?.customPrompt || '',
     });
   } catch (err: any) {
-    console.error("Error saving user AI credentials:", err);
+    addLog("error", "Error saving user AI credentials");
     res.status(500).json({ error: "Ошибка сохранения настроек AI" });
   }
 });
 
-app.delete("/api/user/ai-credentials", async (req, res) => {
-  const uid = await getVerifiedUid(req);
-  if (!uid) {
-    res.status(401).json({ error: "Не авторизован" });
-    return;
-  }
+app.delete("/api/user/ai-credentials", authSensitiveRateLimiter, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
 
   try {
     await deleteUserAiSecret(uid);
     res.json({ success: true });
   } catch (err: any) {
-    console.error("Error deleting user AI credentials:", err);
+    addLog("error", "Error deleting user AI credentials");
     res.status(500).json({ error: "Ошибка удаления настроек AI" });
   }
 });
@@ -408,13 +640,34 @@ interface DebugLog {
 
 const debugLogs: DebugLog[] = [];
 
+// Helper to redact secrets, tokens and passwords from any log/error messages
+function sanitizeSensitiveString(input: string): string {
+  if (!input || typeof input !== 'string') return '';
+  return input
+    .replace(/(AIzaSy[A-Za-z0-9_-]{33})/gi, '[REDACTED_API_KEY]')
+    .replace(/(sk-[A-Za-z0-9_-]{20,})/gi, '[REDACTED_API_KEY]')
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1[REDACTED_TOKEN]')
+    .replace(/("apiKey"\s*:\s*")([^"]+)(")/gi, '$1[REDACTED]$3')
+    .replace(/("password"\s*:\s*")([^"]+)(")/gi, '$1[REDACTED]$3')
+    .replace(/("token"\s*:\s*")([^"]+)(")/gi, '$1[REDACTED]$3')
+    .replace(/("secret"\s*:\s*")([^"]+)(")/gi, '$1[REDACTED]$3')
+    .replace(/("userSecrets"\s*:\s*\{[\s\S]*?\})/gi, '"userSecrets": "[REDACTED]"');
+}
+
 function addLog(level: "info" | "warn" | "error" | "gemini" | "google", message: string, details?: unknown) {
+  const safeMessage = sanitizeSensitiveString(message);
+  let safeDetails: string | undefined = undefined;
+  if (details) {
+    const raw = typeof details === 'string' ? details : JSON.stringify(details, null, 2);
+    safeDetails = sanitizeSensitiveString(raw);
+  }
+
   const log: DebugLog = {
     id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     timestamp: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     level,
-    message,
-    details: details ? (typeof details === 'string' ? details : JSON.stringify(details, null, 2)) : undefined
+    message: safeMessage,
+    details: safeDetails
   };
   debugLogs.unshift(log); // Add to beginning (newest first)
   if (debugLogs.length > 500) {
@@ -1138,7 +1391,7 @@ async function enrichArticlesWithFullText(articles: any[]) {
 
 
 
-app.post("/api/rss/fetch", async (req, res) => {
+app.post("/api/rss/fetch", rssRateLimiter, async (req, res) => {
   const { url, feedId, limit: requestedLimit, type, searchQuery, hashtags, keywords, excludeKeywords, keywordMode, category, title } = req.body;
   const limit = typeof requestedLimit === 'number' && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 50;
 
@@ -1179,6 +1432,11 @@ app.post("/api/rss/fetch", async (req, res) => {
   }
 
   let cleanUrl = url.trim();
+  if (cleanUrl.length > 2048) {
+    res.status(400).json({ error: "Длина URL превышает допустимый лимит (2048 символов)" });
+    return;
+  }
+
   if (!/^https?:\/\//i.test(cleanUrl)) {
     cleanUrl = `https://${cleanUrl}`;
   }
@@ -1346,14 +1604,19 @@ app.post("/api/rss/fetch", async (req, res) => {
 // ----------------------------------------------------
 // 2. Discover RSS Feeds from any Website URL
 // ----------------------------------------------------
-app.post("/api/rss/discover", async (req, res) => {
+app.post("/api/rss/discover", rssRateLimiter, async (req, res) => {
   const { url } = req.body;
-  if (!url) {
+  if (!url || typeof url !== "string") {
     res.status(400).json({ error: "URL обязателен" });
     return;
   }
 
   let targetUrl = url.trim();
+  if (targetUrl.length > 2048) {
+    res.status(400).json({ error: "Длина URL превышает допустимый лимит (2048 символов)" });
+    return;
+  }
+
   if (!/^https?:\/\//i.test(targetUrl)) {
     targetUrl = `https://${targetUrl}`;
   }
@@ -1437,7 +1700,7 @@ app.post("/api/rss/discover", async (req, res) => {
 // ----------------------------------------------------
 // 3. Gemini AI Smart Feed Discovery & Generator
 // ----------------------------------------------------
-app.post("/api/ai/discover-feeds", async (req, res) => {
+app.post("/api/ai/discover-feeds", requireAuth, aiRateLimiter, async (req, res) => {
   const { prompt } = req.body;
   if (!prompt || typeof prompt !== "string") {
     res.status(400).json({ error: "Поисковый запрос обязателен" });
@@ -1718,7 +1981,7 @@ async function scrapeWebArticle(url: string): Promise<{ text: string; images: st
 // ----------------------------------------------------
 // 4. Batch Gemini AI News Processor & Formatter (Single-line, 3-lines, Full Compressed, Terms, Russian Translation)
 // ----------------------------------------------------
-app.post("/api/ai/process-articles", async (req, res) => {
+app.post("/api/ai/process-articles", requireAuth, aiRateLimiter, async (req, res) => {
   const { articles, customPrompt } = req.body;
   if (!articles || !Array.isArray(articles) || articles.length === 0) {
     res.status(400).json({ error: "Список статей обязателен" });
@@ -1833,7 +2096,7 @@ ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗО
 // ----------------------------------------------------
 // 5. Single Article Deep Summarizer & Image Extractor (Modal View)
 // ----------------------------------------------------
-app.post("/api/ai/summarize-article", async (req, res) => {
+app.post("/api/ai/summarize-article", requireAuth, aiRateLimiter, async (req, res) => {
   const { article, customPrompt } = req.body;
   if (!article) {
     res.status(400).json({ error: "Объект статьи обязателен" });
@@ -1935,7 +2198,7 @@ ${customPrompt && customPrompt.trim().length > 5 ? `ОБЯЗАТЕЛЬНО СЛ�
 // ----------------------------------------------------
 // 6. Gemini AI Article Summarization (Custom Prompt / Multi-Archetype)
 // ----------------------------------------------------
-app.post("/api/ai/summarize", async (req, res) => {
+app.post("/api/ai/summarize", requireAuth, aiRateLimiter, async (req, res) => {
   const { title, content, mode = "engineer", customPrompt } = req.body;
   if (!content && !title) {
     res.status(400).json({ error: "Текст или заголовок обязателен" });
@@ -2002,7 +2265,7 @@ app.post("/api/ai/summarize", async (req, res) => {
 // ----------------------------------------------------
 // 5. Gemini AI Daily Digest / Executive Briefing
 // ----------------------------------------------------
-app.post("/api/ai/digest", async (req, res) => {
+app.post("/api/ai/digest", requireAuth, aiRateLimiter, async (req, res) => {
   const { articles, category } = req.body;
   if (!articles || !Array.isArray(articles) || articles.length === 0) {
     res.status(400).json({ error: "Не переданы статьи для дайджеста" });
@@ -2071,7 +2334,7 @@ app.post("/api/ai/digest", async (req, res) => {
 // ----------------------------------------------------
 // 6. Gemini AI Ask My Feeds
 // ----------------------------------------------------
-app.post("/api/ai/ask-feeds", async (req, res) => {
+app.post("/api/ai/ask-feeds", requireAuth, aiRateLimiter, async (req, res) => {
   const { query, articles } = req.body;
   if (!query) {
     res.status(400).json({ error: "Вопрос обязателен" });
@@ -2106,7 +2369,7 @@ app.post("/api/ai/ask-feeds", async (req, res) => {
 // ----------------------------------------------------
 // 7. Multi-User Accounts & Workspace Profile Sync
 // ----------------------------------------------------
-app.get("/api/users", (req, res) => {
+app.get("/api/users", requireAdmin, (req, res) => {
   const users = loadUsersData();
   const profiles = Object.values(users).map((u: Record<string, unknown>) => ({
     id: u.id,
@@ -2120,7 +2383,11 @@ app.get("/api/users", (req, res) => {
   res.json({ profiles });
 });
 
-app.get("/api/users/:id", (req, res) => {
+app.get("/api/users/:id", requireAuth, (req, res) => {
+  if (req.user?.uid !== req.params.id && req.user?.admin !== true) {
+    res.status(403).json({ error: "Доступ запрещён: разрешён доступ только к собственному профилю либо с правами администратора" });
+    return;
+  }
   const users = loadUsersData();
   const user = users[req.params.id];
   if (!user) {
@@ -2130,31 +2397,10 @@ app.get("/api/users/:id", (req, res) => {
   res.json({ user });
 });
 
-app.post("/api/users/save", (req, res) => {
-  const { user } = req.body;
-  if (!user || !user.id) {
-    res.status(400).json({ error: "Некорректные данные пользователя" });
-    return;
-  }
-
-  const cleanUser = { ...user };
-  delete cleanUser.password; // CRITICAL SECURITY REMOVAL of plain text password!
-
-  const users = loadUsersData();
-  users[user.id] = {
-    ...users[user.id],
-    ...cleanUser,
-    updatedAt: new Date().toISOString(),
-  };
-  saveUsersData(users);
-
-  res.json({ success: true, user: users[user.id] });
-});
-
 // ----------------------------------------------------
 // 8. OPML Export / Import Helper
 // ----------------------------------------------------
-app.post("/api/opml/export", (req, res) => {
+app.post("/api/opml/export", rssRateLimiter, (req, res) => {
   const { feeds, title = "PulseDesk Subscriptions" } = req.body;
   if (!feeds || !Array.isArray(feeds)) {
     res.status(400).json({ error: "Список лент обязателен" });
@@ -2192,20 +2438,38 @@ app.post("/api/opml/export", (req, res) => {
 // ----------------------------------------------------
 // Admin Logs API Routes
 // ----------------------------------------------------
-app.get("/api/admin/logs", (req, res) => {
+app.get("/api/admin/logs", requireAdmin, (req, res) => {
   res.json({ logs: debugLogs });
 });
 
-app.post("/api/admin/logs", (req, res) => {
+app.post("/api/admin/logs", requireAdmin, (req, res) => {
   const { type, message, details } = req.body;
   addLog(type || "info", message || "", details);
   res.json({ success: true, logs: debugLogs });
 });
 
-app.post("/api/admin/logs/clear", (req, res) => {
+app.post("/api/admin/logs/clear", requireAdmin, (req, res) => {
   debugLogs.length = 0;
   addLog("info", "Журнал отладки успешно очищен администратором.");
   res.json({ success: true, logs: debugLogs });
+});
+
+// ----------------------------------------------------
+// Global Safe Production Error Handler
+// (Suppresses stack traces in production to prevent leakage)
+// ----------------------------------------------------
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const status = typeof err.status === 'number' ? err.status : 500;
+  const isProd = process.env.NODE_ENV === "production";
+
+  addLog("error", `Необработанная ошибка API [${req.method} ${req.path}]: ${err.message || 'Unknown Error'}`);
+
+  res.status(status).json({
+    error: isProd 
+      ? "Внутренняя ошибка сервера. Обратитесь к администратору." 
+      : (err.message || "Internal Server Error"),
+    status
+  });
 });
 
 // ----------------------------------------------------

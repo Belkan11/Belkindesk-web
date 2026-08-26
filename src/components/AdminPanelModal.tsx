@@ -24,6 +24,7 @@ import {
   Copy
 } from 'lucide-react';
 import { UserProfile, MedicalNote, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle } from '../types';
+import { auth } from '../utils/firebase';
 
 const isDevMode = typeof window !== 'undefined' && (
   window.location.hostname === 'localhost' ||
@@ -94,7 +95,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
     const fetchLogs = async () => {
       try {
-        const res = await fetch('/api/admin/logs');
+        const user = auth.currentUser;
+        const token = user ? await user.getIdToken() : '';
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const res = await fetch('/api/admin/logs', { headers });
         if (res.ok) {
           const data = await res.json();
           setLogs(data.logs || []);
@@ -112,7 +118,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const handleClearLogs = async () => {
     if (!confirm('Вы уверены, что хотите полностью очистить журнал отладки?')) return;
     try {
-      const res = await fetch('/api/admin/logs/clear', { method: 'POST' });
+      const user = auth.currentUser;
+      const token = user ? await user.getIdToken() : '';
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/admin/logs/clear', { method: 'POST', headers });
       if (res.ok) {
         const data = await res.json();
         setLogs(data.logs || []);
@@ -161,7 +172,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   if (!isOpen) return null;
 
   // Strict Admin Gate check: only admins can view
-  if (currentUser?.role !== 'admin' && currentUser?.username?.toLowerCase() !== 'belkin') {
+  if (currentUser?.role !== 'admin') {
     return (
       <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
         <div className="bg-[#0f1218] border border-rose-500/40 rounded-xl p-6 max-w-md w-full text-center">
@@ -420,7 +431,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         });
                       })();
 
-                      const isMainAdmin = (p.username && p.username.toLowerCase() === 'belkin') || p.id === 'user-admin-belkin';
+                      const isMainAdmin = p.id === 'user-admin-belkin' || p.role === 'admin';
                       const isEditing = editingUserId === p.id;
 
                       return (

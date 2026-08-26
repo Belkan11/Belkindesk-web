@@ -126,8 +126,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   const [localAcuity, setLocalAcuity] = useState<string>(accessibility?.visualAcuity || 'Не указывать');
 
   // Feeds state
-  const [localFeeds, setLocalFeeds] = useState<FeedConfig[]>(() => Array.isArray(feeds) ? [...feeds] : []);
+  const [localFeeds, setLocalFeeds] = useState<FeedConfig[]>(() => Array.isArray(feeds) ? JSON.parse(JSON.stringify(feeds)) : []);
   const [selectedFeedIndex, setSelectedFeedIndex] = useState<number>(0);
+  const [isDirty, setIsDirty] = useState<boolean>(false);
+  const prevIsOpenRef = useRef<boolean>(false);
   
   // Extra Accordion state
   const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
@@ -155,15 +157,6 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   const [localModel, setLocalModel] = useState(() => getAiVal('model'));
   const [localUrl, setLocalUrl] = useState(() => getAiVal('url'));
 
-  useEffect(() => {
-    if (isOpen) {
-      setLocalProvider(getAiVal('provider') || 'gemini');
-      setLocalKey(getAiVal('key'));
-      setLocalModel(getAiVal('model'));
-      setLocalUrl(getAiVal('url'));
-    }
-  }, [isOpen, currentUser]);
-
   // Style and Wallpaper local state
   const [localStyle, setLocalStyle] = useState<AppArchetypeStyle>(appStyle);
   const [localWallpaper, setLocalWallpaper] = useState<string>(customWallpaper);
@@ -180,12 +173,12 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   const [savedSuccess, setSavedSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync state when modal opens
+  // Sync state ONLY when modal opens (one-time copy of persisted data to local draft)
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !prevIsOpenRef.current) {
       setActiveTab(initialTab || '✦ ИСТОЧНИКИ');
-      setLocalFeeds(Array.isArray(feeds) ? [...feeds] : [...ENGINEER_DEFAULT_FEEDS]);
-      setLocalTimers(Array.isArray(timers) ? [...timers] : [...INITIAL_MEDICAL_TIMERS]);
+      setLocalFeeds(Array.isArray(feeds) && feeds.length > 0 ? JSON.parse(JSON.stringify(feeds)) : JSON.parse(JSON.stringify(ENGINEER_DEFAULT_FEEDS)));
+      setLocalTimers(Array.isArray(timers) ? JSON.parse(JSON.stringify(timers)) : [...INITIAL_MEDICAL_TIMERS]);
       const s = accessibility?.scalePercent;
       setLocalScale(typeof s === 'number' && [100, 125, 150, 175, 200].includes(s) ? s : 100);
       setLocalAcuity(accessibility?.visualAcuity || 'Не указывать');
@@ -198,23 +191,40 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       setSelectedFeedIndex(0);
       setTestStatusMessage(null);
       setUrlCheckStatus('idle');
-    }
-  }, [isOpen, initialTab, feeds, timers, accessibility, customAiPrompt, appStyle, customWallpaper, scheduledHours]);
+      setIsDirty(false);
 
-  // Robust ESC key listener
+      setLocalProvider(getAiVal('provider') || 'gemini');
+      setLocalKey(getAiVal('key'));
+      setLocalModel(getAiVal('model'));
+      setLocalUrl(getAiVal('url'));
+    }
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  // Request close with unsaved changes confirmation
+  const handleRequestClose = () => {
+    if (isDirty) {
+      const confirmClose = window.confirm('Есть несохранённые изменения. Вы уверены, что хотите закрыть окно без сохранения?');
+      if (!confirmClose) return;
+    }
+    setIsDirty(false);
+    onClose();
+    onPlaySound?.('click');
+  };
+
+  // Robust ESC key listener with dirty confirmation
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'Esc') {
         e.preventDefault();
         e.stopPropagation();
-        onClose();
-        onPlaySound?.('click');
+        handleRequestClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-  }, [isOpen, onClose, onPlaySound]);
+  }, [isOpen, isDirty, onClose, onPlaySound]);
 
   if (!isOpen) return null;
 
@@ -238,6 +248,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     const prev = copy[selectedFeedIndex];
     copy[selectedFeedIndex] = { ...prev, ...updates };
     setLocalFeeds(copy);
+    setIsDirty(true);
   };
 
   const updateCurrentPrimarySource = (sourceUpdates: Partial<NewsSource>) => {
@@ -259,6 +270,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     }
     copy[selectedFeedIndex] = { ...prev, sources };
     setLocalFeeds(copy);
+    setIsDirty(true);
   };
 
   const handleSaveAll = () => {
@@ -334,6 +346,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
         }
       }
       
+      setIsDirty(false);
       setSavedSuccess(true);
       onPlaySound?.('ping');
       setTimeout(() => setSavedSuccess(false), 2000);
@@ -371,6 +384,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     };
     setLocalFeeds([...localFeeds, newF]);
     setSelectedFeedIndex(localFeeds.length);
+    setIsDirty(true);
     onPlaySound?.('click');
   };
 
@@ -390,6 +404,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     nextFeeds.splice(selectedFeedIndex + 1, 0, duplicated);
     setLocalFeeds(nextFeeds);
     setSelectedFeedIndex(selectedFeedIndex + 1);
+    setIsDirty(true);
     onPlaySound?.('success');
   };
 
@@ -400,6 +415,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     if (selectedFeedIndex >= updated.length) {
       setSelectedFeedIndex(Math.max(0, updated.length - 1));
     }
+    setIsDirty(true);
     onPlaySound?.('click');
   };
 
@@ -414,6 +430,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     copy[targetIndex] = temp;
     setLocalFeeds(copy);
     setSelectedFeedIndex(targetIndex);
+    setIsDirty(true);
     onPlaySound?.('click');
   };
 
@@ -424,6 +441,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       enabled: copy[index].enabled !== false ? false : true,
     };
     setLocalFeeds(copy);
+    setIsDirty(true);
     onPlaySound?.('click');
   };
 
@@ -463,6 +481,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
 
     setLocalFeeds(newFeeds);
     setSelectedFeedIndex(0);
+    setIsDirty(true);
     onPlaySound?.('success');
   };
 
@@ -563,8 +582,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-150"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
-          onClose();
-          onPlaySound?.('click');
+          handleRequestClose();
         }
       }}
     >
@@ -581,17 +599,26 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
             </h2>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              onClose();
-              onPlaySound?.('click');
-            }}
-            className="p-1.5 text-slate-400 hover:text-white rounded hover:bg-slate-800 cursor-pointer transition"
-            title="Закрыть (Esc)"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-3">
+            {isDirty && (
+              <div 
+                id="belkin-unsaved-changes-indicator"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-[#ffcc00] font-mono text-[11px] font-bold animate-in fade-in"
+              >
+                <AlertCircle className="w-3.5 h-3.5 text-[#ffcc00] shrink-0" />
+                <span>Есть несохранённые изменения</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleRequestClose}
+              className="p-1.5 text-slate-400 hover:text-white rounded hover:bg-slate-800 cursor-pointer transition"
+              title="Закрыть (Esc)"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Main Body: 3-Column Desktop Layout */}
@@ -1181,6 +1208,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                             } else {
                               setLocalHours([...localHours, hour].sort((a, b) => a - b));
                             }
+                            setIsDirty(true);
                           }}
                           className={`px-3 py-1.5 rounded font-bold border transition cursor-pointer ${
                             isSelected
@@ -1205,6 +1233,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                         setLocalCity(c);
                         const tz = getTimeZoneForCity(c);
                         setLocalTimeZone(tz);
+                        setIsDirty(true);
                       }}
                       className="bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden"
                     >
@@ -1230,7 +1259,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                     <label className="block text-slate-200 font-bold mb-1">AI Провайдер</label>
                     <select
                       value={localProvider}
-                      onChange={(e) => setLocalProvider(e.target.value)}
+                      onChange={(e) => {
+                        setLocalProvider(e.target.value);
+                        setIsDirty(true);
+                      }}
                       className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden"
                     >
                       <option value="gemini">Google Gemini (По умолчанию)</option>
@@ -1245,7 +1277,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                     <input
                       type="password"
                       value={localKey}
-                      onChange={(e) => setLocalKey(e.target.value)}
+                      onChange={(e) => {
+                        setLocalKey(e.target.value);
+                        setIsDirty(true);
+                      }}
                       placeholder={currentUser?.hasAiApiKey ? '•••••••• (Ключ уже сохранен)' : 'Введите ваш API Key'}
                       className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden"
                     />
@@ -1256,7 +1291,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                   <label className="block text-slate-200 font-bold mb-1">Пользовательский системный AI-промпт:</label>
                   <textarea
                     value={localPrompt}
-                    onChange={(e) => setLocalPrompt(e.target.value)}
+                    onChange={(e) => {
+                      setLocalPrompt(e.target.value);
+                      setIsDirty(true);
+                    }}
                     rows={4}
                     className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2.5 text-slate-100 text-xs focus:outline-hidden"
                     placeholder="Инструкция для ИИ по суммаризации статей..."
@@ -1280,7 +1318,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                       <button
                         key={s}
                         type="button"
-                        onClick={() => setLocalScale(s)}
+                        onClick={() => {
+                          setLocalScale(s);
+                          setIsDirty(true);
+                        }}
                         className={`px-4 py-2 rounded font-bold border transition cursor-pointer ${
                           localScale === s
                             ? 'bg-sky-500/20 text-sky-300 border-sky-400'
@@ -1314,7 +1355,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                       <button
                         key={st.id}
                         type="button"
-                        onClick={() => setLocalStyle(st.id as AppArchetypeStyle)}
+                        onClick={() => {
+                          setLocalStyle(st.id as AppArchetypeStyle);
+                          setIsDirty(true);
+                        }}
                         className={`p-2.5 rounded text-left font-bold border transition cursor-pointer ${
                           localStyle === st.id
                             ? 'bg-[#ffcc00]/10 text-[#ffcc00] border-[#ffcc00]'
@@ -1333,7 +1377,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                     <input
                       type="text"
                       value={localWallpaper}
-                      onChange={(e) => setLocalWallpaper(e.target.value)}
+                      onChange={(e) => {
+                        setLocalWallpaper(e.target.value);
+                        setIsDirty(true);
+                      }}
                       placeholder="https://images.unsplash.com/..."
                       className="flex-1 bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden"
                     />
@@ -1348,7 +1395,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                       ref={fileInputRef}
                       type="file"
                       accept="image/*"
-                      onChange={handleImageUpload}
+                      onChange={(e) => {
+                        handleImageUpload(e);
+                        setIsDirty(true);
+                      }}
                       className="hidden"
                     />
                   </div>
@@ -1456,10 +1506,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
         <div className="bg-[#05080c] border-t border-[#152233] px-4 py-3 flex items-center justify-between shrink-0 select-none">
           <button
             type="button"
-            onClick={() => {
-              onClose();
-              onPlaySound?.('click');
-            }}
+            onClick={handleRequestClose}
             className="px-4 py-2 rounded bg-[#0d1622] hover:bg-[#152336] text-slate-300 font-mono text-xs transition cursor-pointer border border-[#1e3a5f]"
           >
             Закрыть (Esc)

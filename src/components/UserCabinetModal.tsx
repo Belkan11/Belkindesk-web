@@ -302,7 +302,7 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
             <span>Редактирование профиля</span>
           </button>
 
-          {isDevMode && (currentUser?.role === 'admin' || currentUser?.username?.toLowerCase() === 'belkin') && (
+          {isDevMode && (currentUser?.role === 'admin') && (
             <button
               type="button"
               onClick={() => {
@@ -368,7 +368,7 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
             <span>Персональный ИИ (BYOK)</span>
           </button>
 
-          {isDevMode && (currentUser?.role === 'admin' || currentUser?.username?.toLowerCase() === 'belkin') && (
+          {isDevMode && (currentUser?.role === 'admin') && (
             <button
               type="button"
               onClick={() => {
@@ -647,7 +647,7 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
 
               {allProfiles.map((p) => {
                 const isActive = p.id === currentUser.id;
-                const isAdmin = p.role === 'admin' || (p.username && p.username.toLowerCase() === 'belkin');
+                const isAdmin = p.role === 'admin';
                 return (
                   <div
                     key={p.id}

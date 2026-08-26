@@ -151,14 +151,14 @@ export default function App() {
     if (firebaseUser && firebaseUser.uid === effectiveActiveId) {
       const email = firebaseUser.email || `${effectiveActiveId}@pulsedesk.local`;
       const displayName = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Пользователь';
-      const isBelkin = displayName.toLowerCase().includes('belkin') || email.toLowerCase().includes('belikovich') || effectiveActiveId === 'user-admin-belkin';
+      const isDevAdmin = isDevMode && effectiveActiveId === 'user-admin-belkin';
       return {
         id: effectiveActiveId,
         username: displayName,
         login: displayName,
         email: email,
         displayName: displayName,
-        role: isBelkin ? 'admin' : 'user',
+        role: isDevAdmin ? 'admin' : 'user',
         createdAt: new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -424,7 +424,7 @@ export default function App() {
       if (!exists) {
         const email = firebaseUser.email || `${effectiveId}@local.desk`;
         const displayName = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Пользователь';
-        const isBelkin = displayName.toLowerCase() === 'belkin' || effectiveId === 'user-admin-belkin';
+        const isDevAdmin = isDevMode && effectiveId === 'user-admin-belkin';
 
         const newProfile: UserProfile = {
           id: effectiveId,
@@ -432,7 +432,7 @@ export default function App() {
           login: displayName,
           email: email,
           displayName: displayName,
-          role: isBelkin ? 'admin' : 'user',
+          role: isDevAdmin ? 'admin' : 'user',
           createdAt: new Date().toISOString(),
           lastLoginAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -643,9 +643,14 @@ export default function App() {
     
     const logToServer = async (type: string, message: string, details?: any) => {
       try {
+        const user = auth.currentUser;
+        const token = user ? await user.getIdToken() : '';
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
         await fetch('/api/admin/logs', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ type, message, details }),
         });
       } catch (err) {

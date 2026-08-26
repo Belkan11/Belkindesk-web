@@ -534,7 +534,7 @@ export function sanitizeProfiles(parsed: UserProfile[]): UserProfile[] {
       const uLogin = String(p.login || p.username || uName);
       const uEmail = String(p.email || `${uLogin.toLowerCase()}@local.desk`);
       const uDisplay = String(p.displayName || uName);
-      const isAdmin = uLogin.toLowerCase() === 'belkin' || p.id === 'user-admin-belkin';
+      const isExplicitDemoAdmin = isDevMode && p.id === 'user-admin-belkin';
       
       // Preserve user feeds and settings carefully!
       const userFeeds = Array.isArray(p.feeds) ? p.feeds : ENGINEER_DEFAULT_FEEDS;
@@ -551,7 +551,7 @@ export function sanitizeProfiles(parsed: UserProfile[]): UserProfile[] {
         login: uLogin,
         email: uEmail,
         displayName: uDisplay,
-        role: (isAdmin ? 'admin' : (p.role || 'user')) as 'admin' | 'doctor' | 'user',
+        role: (isExplicitDemoAdmin ? 'admin' : (p.role || 'user')) as 'admin' | 'doctor' | 'user',
         feeds: userFeeds,
         appStyle: style,
         customAiPrompt: aiPrompt,
@@ -576,7 +576,7 @@ export function sanitizeProfiles(parsed: UserProfile[]): UserProfile[] {
       };
 
       if (allowPassword) {
-        cleanProfile.password = p.password || (isAdmin ? '1511' : '1234');
+        cleanProfile.password = p.password || (isExplicitDemoAdmin ? '1511' : '1234');
       } else {
         delete cleanProfile.password;
       }
