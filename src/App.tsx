@@ -62,6 +62,7 @@ import {
   mergeCloudAndRssArticles,
   getStableCardId 
 } from './utils/newsCardsCloud';
+import { migrateLegacyAiKeysIfPresent } from './utils/aiCredentials';
 import { flushPendingQueue, resetRetryState, reconcileRealtimeWithPendingQueue, getPendingQueue } from './utils/pendingSync';
 
 import { AuthGateScreen } from './components/AuthGateScreen';
@@ -370,22 +371,27 @@ export default function App() {
       return;
     }
 
-    // 1. Safe background migration check
+    // 1. Safe background migration check for newsCards
     migrateLocalArticlesToFirestoreNewsCards(uid).catch((err) => {
       console.warn('[NewsCards Migration] Migration note:', err);
     });
 
-    // 2. Realtime subscription to current user's newsCards collection
+    // 2. Safe background migration check for legacy AI keys
+    migrateLegacyAiKeysIfPresent(uid).catch((err) => {
+      console.warn('[AI Key Migration] Migration note:', err);
+    });
+
+    // 3. Realtime subscription to current user's newsCards collection
     const unsubscribe = subscribeToNewsCardsFromFirestore((cloudCards) => {
       if (!cloudCards) return;
       setArticles((prev) => {
-        const { mergedArticles } = mergeCloudAndRssArticles(cloudCards, prev);
+        const { mergedArticles } = mergeCloudAndRssArticles(cloudCards, prev, feeds);
         saveStoredArticles(mergedArticles, uid);
         return mergedArticles;
       });
     }, uid);
 
-    // 3. Guaranteed cleanup when user logs out or switches
+    // 4. Guaranteed cleanup when user logs out or switches
     return () => {
       unsubscribe();
       setArticles([]);
@@ -558,7 +564,7 @@ export default function App() {
       setRefreshStatusMessage('Скрейпинг завершен. Синхронизация с облачной историей Firestore...');
       
       const cloudCards = firebaseUser?.uid ? await loadNewsCardsFromFirestore() : [];
-      const { mergedArticles, cardsToSaveToCloud } = mergeCloudAndRssArticles(cloudCards, rawArticles);
+      const { mergedArticles, cardsToSaveToCloud } = mergeCloudAndRssArticles(cloudCards, rawArticles, feeds);
 
       // Save new RSS cards to Firestore for current user
       if (firebaseUser?.uid && cardsToSaveToCloud.length > 0) {

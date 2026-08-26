@@ -31,6 +31,19 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "title", "url", "sourceId", "sourceName", "publishedAt", "fetchedAt", "updatedAt"]
+    },
+    "userSecrets": {
+      "title": "UserSecrets",
+      "description": "Server-side only AI keys and sensitive credentials",
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string" },
+        "apiKey": { "type": "string" },
+        "model": { "type": "string" },
+        "url": { "type": "string" },
+        "customPrompt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -41,6 +54,10 @@
     "/users/{userId}/newsCards/{cardId}": {
       "schema": { "$ref": "newsCards" },
       "description": "User personal cloud news cards collection"
+    },
+    "/userSecrets/{userId}": {
+      "schema": { "$ref": "userSecrets" },
+      "description": "User sensitive server-only credentials"
     }
   }
 }

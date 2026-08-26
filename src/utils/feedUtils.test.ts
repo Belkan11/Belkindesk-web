@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { isArticleInFeed, normalizeFeedText, normalizeFeedUrl } from './feedUtils';
-import { Article, FeedConfig } from '../types';
+import { isArticleInFeed, resolveFeedForCard, normalizeFeedText, normalizeFeedUrl } from './feedUtils';
+import { Article, FeedConfig, NewsCard } from '../types';
 
-describe('feedUtils - isArticleInFeed', () => {
+describe('feedUtils - isArticleInFeed & resolveFeedForCard', () => {
   const sampleFeed: FeedConfig = {
     id: 'feed-iphone-repair',
     name: 'iPhone Repair Test',
@@ -45,21 +45,21 @@ describe('feedUtils - isArticleInFeed', () => {
     expect(isArticleInFeed(article as Article, sampleFeed)).toBe(true);
   });
 
-  it('matches by source URL (Priority 2)', () => {
+  it('matches by feed name / title fallback (Priority 2)', () => {
+    const article: Partial<Article> = {
+      id: 'art-4',
+      title: 'iPhone repair tips',
+      feedTitle: 'iPhone Repair Test',
+    };
+    expect(isArticleInFeed(article as Article, sampleFeed)).toBe(true);
+  });
+
+  it('matches by source URL as last fallback (Priority 3)', () => {
     const article: Partial<Article> = {
       id: 'art-3',
       title: 'iFixit Latest Teardown',
       link: 'https://www.ifixit.com/News/feed/article-999',
       feedId: 'unrelated-feed',
-    };
-    expect(isArticleInFeed(article as Article, sampleFeed)).toBe(true);
-  });
-
-  it('matches by feed name / title fallback (Priority 3)', () => {
-    const article: Partial<Article> = {
-      id: 'art-4',
-      title: 'iPhone repair tips',
-      feedTitle: 'iPhone Repair Test',
     };
     expect(isArticleInFeed(article as Article, sampleFeed)).toBe(true);
   });
@@ -73,5 +73,16 @@ describe('feedUtils - isArticleInFeed', () => {
       link: 'https://scardio.ru/news/123',
     };
     expect(isArticleInFeed(article as Article, sampleFeed)).toBe(false);
+  });
+
+  it('resolves feed for legacy card via resolveFeedForCard', () => {
+    const legacyCard: Partial<NewsCard> = {
+      id: 'card-old-1',
+      title: 'Teardown news',
+      sourceId: 'src-ifixit-blog',
+      sourceName: 'iFixit Blog',
+    };
+    const resolved = resolveFeedForCard(legacyCard, [sampleFeed]);
+    expect(resolved?.id).toBe('feed-iphone-repair');
   });
 });

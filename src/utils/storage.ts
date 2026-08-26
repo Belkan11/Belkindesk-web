@@ -886,36 +886,33 @@ export function saveAISettings(
 ) {
   const uid = currentUser?.id;
   const providerKey = uid ? `belkin_user_ai_provider_${uid}` : 'belkin_user_ai_provider';
-  const apiKey = uid ? `belkin_user_ai_key_${uid}` : 'belkin_user_ai_key';
   const modelKey = uid ? `belkin_user_ai_model_${uid}` : 'belkin_user_ai_model';
   const urlKey = uid ? `belkin_user_ai_url_${uid}` : 'belkin_user_ai_url';
 
-  // 1. Save to UID-isolated localStorage
+  // 1. Save provider, model, url to localStorage (NO plaintext API key in localStorage)
   localStorage.setItem(providerKey, provider);
-  if (key.trim()) {
-    localStorage.setItem(apiKey, key.trim());
-  } else {
-    localStorage.removeItem(apiKey);
-  }
   localStorage.setItem(modelKey, model.trim());
   localStorage.setItem(urlKey, url.trim());
 
-  // Clean up legacy non-UID global keys when logged in
+  // Clean up legacy plaintext keys from localStorage
   if (uid) {
+    localStorage.removeItem(`belkin_user_ai_key_${uid}`);
     localStorage.removeItem('belkin_user_ai_provider');
     localStorage.removeItem('belkin_user_ai_key');
     localStorage.removeItem('belkin_user_ai_model');
     localStorage.removeItem('belkin_user_ai_url');
   }
 
-  // 2. Sync to UserProfile if available
+  // 2. Sync to UserProfile if available without plaintext key
   if (currentUser && updateProfileCallback) {
-    updateProfileCallback({
+    const updated: UserProfile = {
       ...currentUser,
       aiProvider: provider as any,
-      aiApiKey: key.trim(),
       aiModel: model.trim(),
       aiUrl: url.trim(),
-    });
+      hasAiApiKey: key.trim().length > 0 ? true : currentUser.hasAiApiKey,
+    };
+    delete updated.aiApiKey;
+    updateProfileCallback(updated);
   }
 }

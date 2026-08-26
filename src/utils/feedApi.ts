@@ -91,47 +91,37 @@ export async function discoverFeedsFromUrl(url: string) {
   return res.json();
 }
 
-function getAiHeaders(explicitUserId?: string): Record<string, string> {
+async function getAiHeaders(explicitUserId?: string): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   try {
-    const activeUserId = explicitUserId || auth.currentUser?.uid || (isDevMode ? getActiveSessionUserId() : null);
-    if (!activeUserId) return headers;
-
-    const providerKey = `belkin_user_ai_provider_${activeUserId}`;
-    const keyKey = `belkin_user_ai_key_${activeUserId}`;
-    const modelKey = `belkin_user_ai_model_${activeUserId}`;
-    const urlKey = `belkin_user_ai_url_${activeUserId}`;
-
-    let key = localStorage.getItem(keyKey);
-    let provider = localStorage.getItem(providerKey);
-    let model = localStorage.getItem(modelKey);
-    let url = localStorage.getItem(urlKey);
-
-    // Fallback to profile restored from Firestore if localStorage cache key is missing
-    if (!key || !provider) {
-      const profiles = getStoredProfiles();
-      const activeUser = profiles.find((p) => p.id === activeUserId);
-      if (activeUser) {
-        if (!key && activeUser.aiApiKey !== undefined) key = activeUser.aiApiKey;
-        if (!provider && activeUser.aiProvider) provider = activeUser.aiProvider;
-        if (!model && activeUser.aiModel !== undefined) model = activeUser.aiModel;
-        if (!url && activeUser.aiUrl !== undefined) url = activeUser.aiUrl;
+    const user = auth.currentUser;
+    if (user) {
+      const token = await user.getIdToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
     }
 
-    if (key) headers['x-user-ai-key'] = key;
-    if (provider) headers['x-user-ai-provider'] = provider;
-    if (model) headers['x-user-ai-model'] = model;
-    if (url) headers['x-user-ai-url'] = url;
+    const activeUserId = explicitUserId || user?.uid || (isDevMode ? getActiveSessionUserId() : null);
+    if (activeUserId) {
+      const provider = localStorage.getItem(`belkin_user_ai_provider_${activeUserId}`);
+      const model = localStorage.getItem(`belkin_user_ai_model_${activeUserId}`);
+      const url = localStorage.getItem(`belkin_user_ai_url_${activeUserId}`);
+
+      if (provider) headers['x-user-ai-provider'] = provider;
+      if (model) headers['x-user-ai-model'] = model;
+      if (url) headers['x-user-ai-url'] = url;
+    }
   } catch (e) {}
   return headers;
 }
 
 export async function aiProcessArticles(articles: Article[], customPrompt?: string): Promise<Article[]> {
   try {
+    const headers = await getAiHeaders();
     const res = await fetch('/api/ai/process-articles', {
       method: 'POST',
-      headers: getAiHeaders(),
+      headers,
       body: JSON.stringify({ articles, customPrompt }),
     });
     if (!res.ok) {
@@ -151,9 +141,10 @@ export async function aiProcessArticles(articles: Article[], customPrompt?: stri
 
 export async function aiSummarizeArticleDeep(article: Article, customPrompt?: string) {
   try {
+    const headers = await getAiHeaders();
     const res = await fetch('/api/ai/summarize-article', {
       method: 'POST',
-      headers: getAiHeaders(),
+      headers,
       body: JSON.stringify({ article, customPrompt }),
     });
     if (!res.ok) {
@@ -178,9 +169,10 @@ export async function aiSummarizeArticleDeep(article: Article, customPrompt?: st
 }
 
 export async function aiDiscoverFeeds(prompt: string): Promise<AIDiscoveredFeed[]> {
+  const headers = await getAiHeaders();
   const res = await fetch('/api/ai/discover-feeds', {
     method: 'POST',
-    headers: getAiHeaders(),
+    headers,
     body: JSON.stringify({ prompt }),
   });
   if (!res.ok) {
@@ -192,9 +184,10 @@ export async function aiDiscoverFeeds(prompt: string): Promise<AIDiscoveredFeed[
 }
 
 export async function aiSummarizeArticle(title: string, content: string, mode = 'executive') {
+  const headers = await getAiHeaders();
   const res = await fetch('/api/ai/summarize', {
     method: 'POST',
-    headers: getAiHeaders(),
+    headers,
     body: JSON.stringify({ title, content, mode }),
   });
   if (!res.ok) {
@@ -205,9 +198,10 @@ export async function aiSummarizeArticle(title: string, content: string, mode = 
 }
 
 export async function aiGenerateDigest(articles: Article[], category?: string): Promise<AIDigestResult> {
+  const headers = await getAiHeaders();
   const res = await fetch('/api/ai/digest', {
     method: 'POST',
-    headers: getAiHeaders(),
+    headers,
     body: JSON.stringify({ articles, category }),
   });
   if (!res.ok) {
@@ -218,9 +212,10 @@ export async function aiGenerateDigest(articles: Article[], category?: string): 
 }
 
 export async function aiAskFeeds(query: string, articles: Article[]): Promise<string> {
+  const headers = await getAiHeaders();
   const res = await fetch('/api/ai/ask-feeds', {
     method: 'POST',
-    headers: getAiHeaders(),
+    headers,
     body: JSON.stringify({ query, articles }),
   });
   if (!res.ok) {

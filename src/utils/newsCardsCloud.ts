@@ -9,9 +9,10 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db, auth, logFirestoreError } from './firebase';
-import { Article, NewsCard } from '../types';
+import { Article, NewsCard, FeedConfig } from '../types';
 import { getStoredArticles, getSeenArticlesList } from './storage';
 import { isRetryableError, addPendingOperation } from './pendingSync';
+import { resolveFeedForCard } from './feedUtils';
 
 /**
  * Normalizes an Article or NewsCard object into a clean NewsCard for Firestore persistence.
@@ -23,8 +24,10 @@ export function mapToNewsCard(input: NewsCard | Article): NewsCard {
   const id = getStableCardId(input);
   const title = input.title || '';
   const url = input.url || input.link || '';
-  const sourceId = input.sourceId || input.feedId || 'custom';
-  const sourceName = input.sourceName || input.feedTitle || 'Новостная лента';
+  const feedId = input.feedId || undefined;
+  const feedTitle = input.feedTitle || undefined;
+  const sourceId = input.sourceId || (input as any).sourceId || (feedId ? feedId : 'custom');
+  const sourceName = input.sourceName || (input as any).sourceName || (feedTitle ? feedTitle : 'Новостная лента');
   const publishedAt = input.publishedAt || input.isoDate || input.pubDate || now;
   const fetchedAt = input.fetchedAt || input.firstSeenAt || now;
   const firstSeenAt = input.firstSeenAt || input.fetchedAt || now;
@@ -62,12 +65,18 @@ export function mapToNewsCard(input: NewsCard | Article): NewsCard {
     updatedAt,
   };
 
-  // Optional lightweight metadata preservation
+  // Explicitly persist feedId and feedTitle
+  if (feedId) card.feedId = feedId;
+  if (feedTitle) card.feedTitle = feedTitle;
+  if (input.feedCategory) card.feedCategory = input.feedCategory;
   if (input.feedIcon) card.feedIcon = input.feedIcon;
   if (input.author) card.author = input.author;
   if (input.aiSummary || input.ai?.aiSummary) card.aiSummary = input.aiSummary || input.ai?.aiSummary;
   if (input.keyTerms || input.ai?.keyTerms) card.keyTerms = input.keyTerms || input.ai?.keyTerms;
   if (input.extractionStatus) card.extractionStatus = input.extractionStatus;
+  if (input.deleted !== undefined) card.deleted = input.deleted;
+  if (input.deletedAt) card.deletedAt = input.deletedAt;
+  if (input.version !== undefined) card.version = input.version;
 
   return card;
 }
@@ -335,6 +344,70 @@ export function getStableCardId(item: Article | NewsCard): string {
 }
 
 /**
+ * Converts a stored NewsCard back into a full Article runtime object.
+ * Restores:
+ *   feedId -> feedId
+ *   feedTitle -> feedTitle
+ *   sourceId -> sourceId
+ *   sourceName -> sourceName
+ * For legacy cards where feedId is missing, performs safe fallback via feeds without clobbering feedId with sourceId when feedId already exists.
+ */
+export function convertCloudCardToArticle(card: NewsCard, feeds?: FeedConfig[]): Article {
+  const cardId = getStableCardId(card);
+
+  let feedId = card.feedId;
+  let feedTitle = card.feedTitle;
+
+  // Legacy fallback for older NewsCards without feedId: attempt genuine resolution against configured feeds
+  if (!feedId && feeds && feeds.length > 0) {
+    const matchedFeed = resolveFeedForCard(card, feeds);
+    if (matchedFeed) {
+      feedId = matchedFeed.id;
+      feedTitle = matchedFeed.name || (matchedFeed as any).title;
+    }
+  }
+
+  // If still no feedId (no matching Feed found), DO NOT clobber feedId with sourceId. Leave feedId/feedTitle undefined.
+
+  return {
+    id: cardId,
+    title: card.title,
+    titleRu: card.title,
+    link: card.url,
+    url: card.url,
+    pubDate: card.publishedAt,
+    isoDate: card.publishedAt,
+    publishedAt: card.publishedAt,
+    fetchedAt: card.fetchedAt,
+    sourceId: card.sourceId,
+    sourceName: card.sourceName,
+    feedId: feedId,
+    feedTitle: feedTitle,
+    content: card.description || card.summary || '',
+    contentSnippet: card.summary || '',
+    summaryOneLine: card.summary || '',
+    summaryThreeLines: card.description || card.summary || '',
+    imageUrl: card.imageUrl,
+    category: card.category,
+    feedCategory: card.feedCategory || card.category,
+    isRead: Boolean(card.isRead),
+    isStarred: Boolean(card.isStarred),
+    isHidden: Boolean(card.isHidden),
+    savedLater: Boolean(card.savedLater),
+    isSavedLater: Boolean(card.savedLater),
+    userNote: card.userNote || '',
+    updatedAt: card.updatedAt || new Date().toISOString(),
+    deleted: Boolean(card.deleted),
+    deletedAt: card.deletedAt,
+    version: card.version || 1,
+    aiSummary: card.aiSummary,
+    keyTerms: card.keyTerms,
+    author: card.author,
+    feedIcon: card.feedIcon,
+  };
+}
+
+/**
  * Merges cloud newsCards from Firestore with fresh RSS articles.
  * Rules:
  * 1. Matching via stable cardId (getStableCardId).
@@ -348,7 +421,8 @@ export function getStableCardId(item: Article | NewsCard): string {
  */
 export function mergeCloudAndRssArticles(
   cloudCards: NewsCard[],
-  freshRssArticles: Article[]
+  freshRssArticles: Article[],
+  feeds?: FeedConfig[]
 ): { mergedArticles: Article[]; cardsToSaveToCloud: Article[] } {
   const cloudMap = new Map<string, NewsCard>();
   const cloudUrlMap = new Map<string, NewsCard>();
@@ -377,6 +451,10 @@ export function mergeCloudAndRssArticles(
       processedCloudIds.add(cloudStableId);
       if (cloudCard.id) processedCloudIds.add(cloudCard.id);
 
+      const matchedFeed = (!cloudCard.feedId && feeds && feeds.length > 0) ? resolveFeedForCard(cloudCard, feeds) : undefined;
+      const cloudResolvedFeedId = cloudCard.feedId || matchedFeed?.id;
+      const cloudResolvedFeedTitle = cloudCard.feedTitle || matchedFeed?.name || (matchedFeed as any)?.title;
+
       // Card exists in both: RSS updates CONTENT STATE, cloudCard strictly maintains USER STATE
       const mergedArticle: Article = {
         ...rssArt,
@@ -394,9 +472,9 @@ export function mergeCloudAndRssArticles(
         publishedAt: rssArt.publishedAt || rssArt.pubDate || cloudCard.publishedAt,
         sourceId: rssArt.sourceId || cloudCard.sourceId,
         sourceName: rssArt.sourceName || cloudCard.sourceName,
-        feedId: rssArt.feedId || cloudCard.sourceId,
-        feedTitle: rssArt.feedTitle || cloudCard.sourceName,
-        feedCategory: rssArt.feedCategory || cloudCard.category,
+        feedId: rssArt.feedId || cloudResolvedFeedId,
+        feedTitle: rssArt.feedTitle || cloudResolvedFeedTitle,
+        feedCategory: rssArt.feedCategory || cloudCard.feedCategory || cloudCard.category,
 
         // USER STATES: Strictly from cloudCard (RSS metadata updates do NOT alter cloud user state)
         isRead: Boolean(cloudCard.isRead),
@@ -446,41 +524,7 @@ export function mergeCloudAndRssArticles(
       processedCloudIds.add(cardId);
       if (card.id) processedCloudIds.add(card.id);
 
-      const archivedArticle: Article = {
-        id: cardId,
-        title: card.title,
-        titleRu: card.title,
-        link: card.url,
-        url: card.url,
-        pubDate: card.publishedAt,
-        isoDate: card.publishedAt,
-        publishedAt: card.publishedAt,
-        fetchedAt: card.fetchedAt,
-        sourceId: card.sourceId,
-        sourceName: card.sourceName,
-        feedId: card.sourceId,
-        feedTitle: card.sourceName,
-        content: card.description || card.summary || '',
-        contentSnippet: card.summary || '',
-        summaryOneLine: card.summary || '',
-        summaryThreeLines: card.description || card.summary || '',
-        imageUrl: card.imageUrl,
-        category: card.category,
-        feedCategory: card.category,
-        isRead: Boolean(card.isRead),
-        isStarred: Boolean(card.isStarred),
-        isHidden: Boolean(card.isHidden),
-        savedLater: Boolean(card.savedLater),
-        isSavedLater: Boolean(card.savedLater),
-        userNote: card.userNote || '',
-        updatedAt: card.updatedAt || new Date().toISOString(),
-        deleted: Boolean(card.deleted),
-        deletedAt: card.deletedAt,
-        version: card.version || 1,
-        aiSummary: card.aiSummary,
-        keyTerms: card.keyTerms,
-      };
-
+      const archivedArticle = convertCloudCardToArticle(card, feeds);
       mergedMap.set(cardId, archivedArticle);
     }
   }

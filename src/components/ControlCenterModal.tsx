@@ -1,4 +1,3 @@
-import { FeedConfigEditor } from './FeedConfigEditor';
 import React, { useState, useEffect, useRef } from 'react';
 import {  
   X, 
@@ -30,8 +29,23 @@ import {
   Compass,
   Volume2,
   VolumeX,
-  Database } from 'lucide-react';
-import { FeedConfig, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle, UserProfile } from '../types';
+  Database,
+  Cpu,
+  Wrench,
+  TrendingUp,
+  Car,
+  Code,
+  Briefcase,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  FlaskConical,
+  Link as LinkIcon,
+  Lightbulb,
+  MoreVertical,
+  Activity
+} from 'lucide-react';
+import { FeedConfig, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle, UserProfile, SourceType, NewsSource } from '../types';
 import { MEDICAL_FEEDS, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS, CURATED_FEED_PRESETS } from '../data/curatedFeeds';
 import { INITIAL_MEDICAL_TIMERS, saveAISettings } from '../utils/storage';
 import { 
@@ -115,11 +129,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   const [localFeeds, setLocalFeeds] = useState<FeedConfig[]>(() => Array.isArray(feeds) ? [...feeds] : []);
   const [selectedFeedIndex, setSelectedFeedIndex] = useState<number>(0);
   
-  // Feed Form Inputs matching the screenshot
-  const [feedType, setFeedType] = useState<'youtube' | 'rss' | '4pda' | 'pikabu' | 'telegram' | 'reddit'>('youtube');
-  const [feedName, setFeedName] = useState<string>('');
-  const [feedSearchQuery, setFeedSearchQuery] = useState<string>('');
-  const [feedHashtagsText, setFeedHashtagsText] = useState<string>('');
+  // Extra Accordion state
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
+  const [testStatusMessage, setTestStatusMessage] = useState<string | null>(null);
+  const [urlCheckStatus, setUrlCheckStatus] = useState<'idle' | 'valid' | 'invalid'>('idle');
 
   // AI Prompt local state
   const getAiVal = (field: 'provider' | 'key' | 'model' | 'url') => {
@@ -151,7 +164,6 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     }
   }, [isOpen, currentUser]);
 
-  
   // Style and Wallpaper local state
   const [localStyle, setLocalStyle] = useState<AppArchetypeStyle>(appStyle);
   const [localWallpaper, setLocalWallpaper] = useState<string>(customWallpaper);
@@ -184,20 +196,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       setLocalCity(getStoredCity());
       setLocalTimeZone(getStoredTimeZone());
       setSelectedFeedIndex(0);
+      setTestStatusMessage(null);
+      setUrlCheckStatus('idle');
     }
   }, [isOpen, initialTab, feeds, timers, accessibility, customAiPrompt, appStyle, customWallpaper, scheduledHours]);
-
-  // When selected feed changes, populate the form fields
-  useEffect(() => {
-    if (localFeeds.length > 0 && selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length) {
-      const f = localFeeds[selectedFeedIndex] as any;
-      const primarySource = (f.sources && f.sources[0]) || f;
-      setFeedType(primarySource.type || (primarySource.url?.includes('youtube.com') ? 'youtube' : primarySource.url?.includes('pikabu.ru') ? 'pikabu' : primarySource.url?.includes('4pda') ? '4pda' : primarySource.url?.includes('reddit') ? 'reddit' : 'rss'));
-      setFeedName(f.name || f.title || '');
-      setFeedSearchQuery(primarySource.searchQuery || primarySource.query || '');
-      setFeedHashtagsText(primarySource.hashtags?.join('\n') || primarySource.keywords?.join('\n') || '');
-    }
-  }, [selectedFeedIndex, localFeeds]);
 
   // Robust ESC key listener
   useEffect(() => {
@@ -226,60 +228,56 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     '♥ О ПРОЕКТЕ',
   ];
 
-  
-  const handleApplyFeed = () => {
-    // The FeedConfigEditor updates localFeeds in real-time.
-    // We just return it for consistency.
-    onPlaySound?.('success');
-    return localFeeds;
+  // Helper getters for current selected feed
+  const currentFeed: FeedConfig | null = localFeeds[selectedFeedIndex] || null;
+  const currentPrimarySource: NewsSource | null = currentFeed?.sources?.[0] || null;
+
+  const updateCurrentFeed = (updates: Partial<FeedConfig>) => {
+    if (selectedFeedIndex < 0 || selectedFeedIndex >= localFeeds.length) return;
+    const copy = [...localFeeds];
+    const prev = copy[selectedFeedIndex];
+    copy[selectedFeedIndex] = { ...prev, ...updates };
+    setLocalFeeds(copy);
   };
 
-  
-  const handleUpdateSelectedFeed = (updatedFeed: FeedConfig) => {
+  const updateCurrentPrimarySource = (sourceUpdates: Partial<NewsSource>) => {
     if (selectedFeedIndex < 0 || selectedFeedIndex >= localFeeds.length) return;
-    const newFeeds = [...localFeeds];
-    newFeeds[selectedFeedIndex] = updatedFeed;
-    setLocalFeeds(newFeeds);
+    const copy = [...localFeeds];
+    const prev = copy[selectedFeedIndex];
+    const sources = [...(prev.sources || [])];
+    if (sources.length === 0) {
+      sources.push({
+        id: `src-${Date.now()}`,
+        name: prev.name || 'Новый источник',
+        type: 'rss',
+        url: '',
+        enabled: true,
+        ...sourceUpdates
+      });
+    } else {
+      sources[0] = { ...sources[0], ...sourceUpdates };
+    }
+    copy[selectedFeedIndex] = { ...prev, sources };
+    setLocalFeeds(copy);
   };
 
   const handleSaveAll = () => {
     try {
-      let feedsToSave = localFeeds;
-      // If the user has an active edit but hasn't clicked apply, auto-apply it:
-      if (selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length && feedName.trim()) {
-        feedsToSave = handleApplyFeed();
-      }
+      const feedsToSave = localFeeds;
       
-      // 1. Save local weather and AI settings to localStorage for immediate browser activation
+      // 1. Save local weather to localStorage
       localStorage.setItem('belkin_weather_city', localCity);
       localStorage.setItem('belkin_weather_tz', localTimeZone);
 
-      const uid = currentUser?.id;
-      if (uid) {
-        localStorage.setItem(`belkin_user_ai_provider_${uid}`, localProvider);
-        if (localKey.trim()) {
-          localStorage.setItem(`belkin_user_ai_key_${uid}`, localKey.trim());
-        } else {
-          localStorage.removeItem(`belkin_user_ai_key_${uid}`);
-        }
-        localStorage.setItem(`belkin_user_ai_model_${uid}`, localModel.trim());
-        localStorage.setItem(`belkin_user_ai_url_${uid}`, localUrl.trim());
-
-        // Remove legacy global keys so no other user on this browser sees them
-        localStorage.removeItem('belkin_user_ai_provider');
-        localStorage.removeItem('belkin_user_ai_key');
-        localStorage.removeItem('belkin_user_ai_model');
-        localStorage.removeItem('belkin_user_ai_url');
-      } else {
-        localStorage.setItem('belkin_user_ai_provider', localProvider);
-        if (localKey.trim()) {
-          localStorage.setItem('belkin_user_ai_key', localKey.trim());
-        } else {
-          localStorage.removeItem('belkin_user_ai_key');
-        }
-        localStorage.setItem('belkin_user_ai_model', localModel.trim());
-        localStorage.setItem('belkin_user_ai_url', localUrl.trim());
-      }
+      // Save AI settings through the secure server-side mechanism
+      saveAISettings(
+        localProvider as any,
+        localKey.trim() || undefined,
+        localModel.trim(),
+        localUrl.trim(),
+        currentUser,
+        () => {}
+      );
 
       // 2. Prepare the consolidated updates object
       const updates: Partial<UserProfile> = {
@@ -298,16 +296,20 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
         customWallpaper: localWallpaper,
         scheduledHours: localHours,
         aiProvider: localProvider as any,
-        aiApiKey: localKey.trim(),
         aiModel: localModel.trim(),
-        aiUrl: localUrl.trim()
+        aiUrl: localUrl.trim(),
+        hasAiApiKey: !!(localKey.trim() || currentUser?.hasAiApiKey)
       };
 
-      // 3. Save everything with a single atomic callback to avoid race conditions!
+      // Clear the local plain text key input once saved
+      if (localKey.trim()) {
+        setLocalKey('');
+      }
+
+      // 3. Save everything with a single atomic callback to avoid race conditions
       if (onSaveAllWorkspaceSettings) {
         onSaveAllWorkspaceSettings(updates);
       } else {
-        // Fallback to legacy individual triggers if callback is not supplied
         onUpdateFeeds(feedsToSave);
         onUpdateTimers(localTimers);
         if (accessibility && onUpdateAccessibility) {
@@ -325,9 +327,9 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
           onUpdateUserDetails({
             ...currentUser,
             aiProvider: localProvider as any,
-            aiApiKey: localKey.trim(),
             aiModel: localModel.trim(),
-            aiUrl: localUrl.trim()
+            aiUrl: localUrl.trim(),
+            hasAiApiKey: updates.hasAiApiKey
           });
         }
       }
@@ -336,7 +338,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       onPlaySound?.('ping');
       setTimeout(() => setSavedSuccess(false), 2000);
       
-      // Trigger a refresh if they changed feeds
+      // Trigger a refresh if feeds changed
       onTriggerRefresh?.(feedsToSave);
       
     } catch (err) {
@@ -350,14 +352,19 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       name: 'Новый источник',
       category: 'Пользовательский',
       enabled: true,
+      keywords: [],
+      excludeKeywords: [],
+      keywordMode: 'ANY',
+      language: 'ru, en',
+      maxArticles: 10,
+      refreshInterval: 60,
       sources: [
         {
           id: `src-${Date.now()}`,
           name: 'Новый источник',
-          type: 'youtube',
-          url: 'https://www.youtube.com/',
-          query: 'поисковый запрос',
-          keywords: ['тег 1', 'тег 2'],
+          type: 'rss',
+          url: 'https://',
+          query: '',
           enabled: true
         }
       ]
@@ -365,6 +372,25 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     setLocalFeeds([...localFeeds, newF]);
     setSelectedFeedIndex(localFeeds.length);
     onPlaySound?.('click');
+  };
+
+  const handleDuplicateFeed = () => {
+    if (selectedFeedIndex < 0 || selectedFeedIndex >= localFeeds.length) return;
+    const current = localFeeds[selectedFeedIndex];
+    const duplicated: FeedConfig = {
+      ...JSON.parse(JSON.stringify(current)),
+      id: `feed-${Date.now()}`,
+      name: `${current.name} (Копия)`,
+      sources: (current.sources || []).map((s, i) => ({
+        ...s,
+        id: `src-${Date.now()}-${i}`
+      }))
+    };
+    const nextFeeds = [...localFeeds];
+    nextFeeds.splice(selectedFeedIndex + 1, 0, duplicated);
+    setLocalFeeds(nextFeeds);
+    setSelectedFeedIndex(selectedFeedIndex + 1);
+    onPlaySound?.('success');
   };
 
   const handleDeleteFeed = () => {
@@ -401,6 +427,85 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     onPlaySound?.('click');
   };
 
+  const handleLoadPreset = (preset: typeof CURATED_FEED_PRESETS[0]) => {
+    const newFeeds: FeedConfig[] = preset.feeds.map((f: any, i) => {
+      let srcType: SourceType = 'rss';
+      if (f.url && f.url.includes('youtube.com')) srcType = 'youtube';
+      else if (f.url && f.url.includes('pikabu.ru')) srcType = 'pikabu';
+      else if (f.url && f.url.includes('4pda')) srcType = '4pda';
+      else if (f.url && f.url.includes('reddit.com')) srcType = 'reddit';
+
+      return {
+        id: `preset-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 4)}`,
+        name: f.name || f.title,
+        category: preset.category,
+        description: f.description || '',
+        enabled: true,
+        keywords: f.tags || f.hashtags || [],
+        excludeKeywords: [],
+        keywordMode: 'ANY',
+        language: 'ru',
+        maxArticles: 10,
+        refreshInterval: 60,
+        sources: [
+          {
+            id: `src-${Date.now()}-${i}`,
+            name: f.name || f.title,
+            type: srcType,
+            url: f.url,
+            query: f.query || '',
+            keywords: f.tags || f.hashtags || [],
+            enabled: true
+          }
+        ]
+      };
+    });
+
+    setLocalFeeds(newFeeds);
+    setSelectedFeedIndex(0);
+    onPlaySound?.('success');
+  };
+
+  const handleCheckUrl = () => {
+    const rawUrl = currentPrimarySource?.url?.trim() || '';
+    if (!rawUrl) {
+      setUrlCheckStatus('invalid');
+      return;
+    }
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        setUrlCheckStatus('valid');
+        onPlaySound?.('success');
+        setTimeout(() => setUrlCheckStatus('idle'), 3000);
+      } else {
+        setUrlCheckStatus('invalid');
+        onPlaySound?.('alert');
+        setTimeout(() => setUrlCheckStatus('idle'), 3000);
+      }
+    } catch {
+      setUrlCheckStatus('invalid');
+      onPlaySound?.('alert');
+      setTimeout(() => setUrlCheckStatus('idle'), 3000);
+    }
+  };
+
+  const handleTestFeed = () => {
+    const feed = currentFeed;
+    if (!feed) return;
+    const url = currentPrimarySource?.url?.trim() || '';
+    const query = currentPrimarySource?.query?.trim() || '';
+    if (!url && !query) {
+      setTestStatusMessage('Укажите URL ленты или поисковый запрос');
+      onPlaySound?.('alert');
+      setTimeout(() => setTestStatusMessage(null), 3000);
+      return;
+    }
+    setTestStatusMessage('Тест источника: параметры конфигурации корректны ✓');
+    onPlaySound?.('success');
+    setTimeout(() => setTestStatusMessage(null), 3500);
+  };
+
   // Image Upload handler for wallpaper
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -432,6 +537,26 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     { name: 'Глубокий Космос / Deep Slate', url: 'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?w=1920&auto=format&fit=crop&q=80' },
   ];
 
+  // Helper icons for preset categories
+  const getCategoryIcon = (categoryName: string) => {
+    if (categoryName.includes('Инженер') || categoryName.includes('Ремонт')) {
+      return <Cpu className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+    }
+    if (categoryName.includes('Кардиолог') || categoryName.includes('Медицин')) {
+      return <Heart className="w-3.5 h-3.5 text-yellow-400 shrink-0" />;
+    }
+    if (categoryName.includes('Экономик') || categoryName.includes('Финанс')) {
+      return <TrendingUp className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
+    }
+    if (categoryName.includes('Автомоб') || categoryName.includes('Автосервис')) {
+      return <Car className="w-3.5 h-3.5 text-fuchsia-400 shrink-0" />;
+    }
+    if (categoryName.includes('IT') || categoryName.includes('Разработ')) {
+      return <Code className="w-3.5 h-3.5 text-cyan-400 shrink-0" />;
+    }
+    return <Briefcase className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
+  };
+
   return (
     <div 
       id="belkin-control-center-modal"
@@ -444,15 +569,15 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       }}
     >
       <div 
-        className="bg-[#0f1216] border border-[#2b2518] rounded-xl shadow-2xl w-full max-w-5xl h-[760px] max-h-[92vh] flex flex-col overflow-hidden text-slate-200"
+        className="bg-[#090d14] border border-[#1b2b40] rounded-2xl shadow-2xl w-[96vw] max-w-[1650px] h-[92vh] max-h-[94vh] flex flex-col overflow-hidden text-slate-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header Bar */}
-        <div className="bg-[#0b0e12] border-b border-[#2b2518] flex items-center justify-between px-4 py-3 select-none shrink-0">
+        <div className="bg-[#070a0f] border-b border-[#152233] flex items-center justify-between px-4 py-3 select-none shrink-0">
           <div className="flex items-center gap-2">
             <div className="w-2.5 h-2.5 rounded-full bg-[#ffcc00] animate-pulse"></div>
             <h2 className="font-mono text-xs uppercase tracking-wider font-bold text-[#ffcc00]">
-              Центр управления источниками и настройками
+              ЦЕНТР УПРАВЛЕНИЯ ИСТОЧНИКАМИ И НАСТРОЙКАМИ
             </h2>
           </div>
 
@@ -469,990 +594,701 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
           </button>
         </div>
 
-        {/* Modal Main Body: Sidebar + Content */}
-        <div className="flex-1 flex flex-col md:flex-row overflow-hidden bg-[#07090e]">
+        {/* Modal Main Body: 3-Column Desktop Layout */}
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden bg-[#06090e]">
           
-          {/* Left Vertical Navigation Sidebar */}
-          <div className="w-full md:w-64 bg-[#0b0e12] border-b md:border-b-0 md:border-r border-[#2b2518] p-2 flex md:flex-col gap-1 overflow-x-auto md:overflow-y-auto shrink-0 select-none">
-            {tabs.map((tab) => {
-              const isActive = activeTab === tab;
-              return (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => {
-                    setActiveTab(tab);
-                    onPlaySound?.('click');
-                  }}
-                  className={`w-full text-left px-3.5 py-2.5 font-mono text-xs uppercase tracking-wider font-bold transition-all rounded-lg cursor-pointer shrink-0 flex items-center justify-between ${
-                    isActive
-                      ? 'bg-[#181d26] text-[#ffcc00] border-l-2 border-[#ffcc00] shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-[#121720]'
-                  }`}
-                >
-                  <span className="truncate">{tab}</span>
-                  {isActive && <span className="text-[10px] text-[#ffcc00]">●</span>}
-                </button>
-              );
-            })}
+          {/* COLUMN 1: Left Navigation Sidebar */}
+          <div className="w-full md:w-56 lg:w-60 bg-[#070b10] border-b md:border-b-0 md:border-r border-[#152233] p-3 flex flex-col justify-between shrink-0 select-none overflow-y-auto">
+            <div className="space-y-1">
+              {tabs.map((tab) => {
+                const isActive = activeTab === tab;
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(tab);
+                      onPlaySound?.('click');
+                    }}
+                    className={`w-full text-left px-3 py-2 font-mono text-xs uppercase tracking-wider font-bold transition-all rounded-lg cursor-pointer flex items-center justify-between ${
+                      isActive
+                        ? 'bg-[#151c27] text-[#ffcc00] border-l-2 border-[#ffcc00] shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-[#0d141e]'
+                    }`}
+                  >
+                    <span className="truncate">{tab}</span>
+                    {isActive && <span className="text-[10px] text-[#ffcc00]">●</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Bottom Tip Card matching screenshot */}
+            <div className="mt-4 p-3 rounded-lg bg-[#0c121a] border border-[#ffcc00]/30 text-slate-300">
+              <div className="flex items-center gap-1.5 text-[#ffcc00] font-bold text-[10px] uppercase mb-1">
+                <Lightbulb className="w-3.5 h-3.5 text-[#ffcc00]" />
+                <span>ПОДСКАЗКА</span>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-tight">
+                Перетаскивайте источники для изменения порядка отображения в ленте.
+              </p>
+            </div>
           </div>
 
-          {/* Right Scrollable Content Panel */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#0b0e12]/95 space-y-4">
-            
-            {/* TAB 1: ✦ ИСТОЧНИКИ */}
-            {activeTab === '✦ ИСТОЧНИКИ' && (
-            <div className="space-y-3 animate-in fade-in duration-100 font-mono text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-[#ffcc00] font-bold text-[11px] uppercase tracking-wide">
-                  Управление источниками и сайтами
-                </span>
-                <span className="text-[10px] text-slate-400">
-                  (Клик — выбрать, Двойной клик — включить/выключить)
-                </span>
-              </div>
-
-              {/* Profession / Activity Curated Presets */}
-              <div className="space-y-2 pb-2 border-b border-[#2b2518]">
-                <div className="text-slate-300 font-bold text-[11px] flex items-center gap-1.5">
-                  <Compass className="w-3.5 h-3.5 text-[#ffcc00]" />
-                  <span>Готовые наборы источников по видам деятельности (профессиям):</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                  {CURATED_FEED_PRESETS.map((preset) => (
-                    <div
-                      key={preset.category}
-                      onClick={() => {
-                        const newFeeds: FeedConfig[] = preset.feeds.map((f: any, i) => ({
-                          id: `preset-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 4)}`,
-                          name: f.name || f.title,
-                          category: preset.category,
-                          enabled: true,
-                          sources: [
-                            {
-                              id: `src-${Date.now()}-${i}`,
-                              name: f.name || f.title,
-                              type: (f.url && f.url.includes('youtube.com')) ? 'youtube' : (f.url && f.url.includes('pikabu.ru')) ? 'pikabu' : (f.url && f.url.includes('4pda')) ? '4pda' : 'rss',
-                              url: f.url,
-                              keywords: f.tags || f.hashtags || [],
-                              enabled: true
-                            }
-                          ]
-                        }));
-                        // Append new feeds
-                        setLocalFeeds(prev => {
-                          return [...prev, ...newFeeds];
-                        });
-                        onPlaySound?.('success');
-                      }}
-                      className="p-2.5 rounded-lg bg-[#0f1218] hover:bg-[#181d26] border border-[#2b2518] hover:border-[#ffcc00]/50 cursor-pointer transition flex flex-col justify-between group"
+          {/* TAB 1: ✦ ИСТОЧНИКИ (Split into Column 2 + Column 3) */}
+          {activeTab === '✦ ИСТОЧНИКИ' && (
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+              
+              {/* COLUMN 2: Presets & Sources in Preset (~420px) */}
+              <div className="w-full md:w-[420px] lg:w-[450px] shrink-0 bg-[#080d14] border-b md:border-b-0 md:border-r border-[#152233] p-3.5 flex flex-col gap-3 overflow-hidden">
+                
+                {/* Top Section: ПРЕСЕТЫ (6) */}
+                <div className="space-y-2 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[#ffcc00] font-mono font-bold text-xs uppercase tracking-wide">
+                      ПРЕСЕТЫ ({CURATED_FEED_PRESETS.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleAddNewFeed}
+                      className="text-[11px] font-mono text-sky-400 hover:text-sky-300 cursor-pointer flex items-center gap-1 hover:underline"
                     >
-                      <div>
-                        <div className="flex items-center justify-between font-bold text-slate-200 group-hover:text-[#ffcc00] transition">
-                          <span className="truncate">{preset.category}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 font-mono">
-                            {preset.feeds.length} сайтов
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-1 line-clamp-2 leading-tight">
-                          {preset.description}
-                        </p>
-                      </div>
-                      <div className="mt-2 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-amber-400 font-bold">
-                        <span>Загрузить набор</span>
-                        <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                      <Plus className="w-3 h-3" />
+                      <span>Новый пресет</span>
+                    </button>
+                  </div>
 
-              {/* Redesigned Visually Convenient Sources List Box */}
-              <div className="bg-[#07090e] border border-[#2b2518] rounded-xl p-3 max-h-56 overflow-y-auto space-y-2 font-mono text-xs select-none shadow-inner">
-                {localFeeds.map((feed, idx) => {
-                  const isSelected = selectedFeedIndex === idx;
-                  const isEnabled = feed.enabled !== false;
-                  const isError = feed.status === 'error';
-                  const typeLabel = feed.type || 'rss';
-
-                  return (
-                    <div
-                      key={feed.id || idx}
-                      onClick={() => {
-                        setSelectedFeedIndex(idx);
-                        onPlaySound?.('click');
-                      }}
-                      onDoubleClick={() => handleToggleFeedEnabled(idx)}
-                      className={`p-2.5 rounded-lg cursor-pointer transition flex items-center justify-between gap-3 ${
-                        isSelected 
-                          ? 'bg-[#1e1910] text-[#ffcc00] font-bold border border-[#ffcc00]/50 shadow-sm' 
-                          : isError
-                            ? 'bg-[#1a0f12] text-rose-200 border border-rose-500/40'
-                            : isEnabled 
-                              ? 'bg-[#0f1218] text-slate-200 hover:bg-[#141a24] border border-[#2b2518]/60' 
-                              : 'bg-[#090b0f] text-slate-500 line-through border border-slate-800/40 opacity-70'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${isError ? 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.6)]' : isEnabled ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]' : 'bg-slate-600'}`} />
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-amber-300 font-bold uppercase tracking-wider border border-slate-700 shrink-0">
-                          {typeLabel}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-slate-100 truncate flex items-center gap-2">
-                            <span>{feed.name}</span>
-                            {isError && (
-                              <span className="px-1.5 py-0.2 bg-rose-500/20 text-rose-300 text-[9px] rounded border border-rose-500/30 uppercase font-bold tracking-normal">
-                                Нерабочий / Ошибка
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-slate-400 truncate font-normal mt-0.5">{feed.searchQuery || feed.url}</div>
-                          {isError && feed.errorMessage && (
-                            <div className="text-[10px] text-rose-400 mt-0.5 truncate italic">
-                              Причина: {feed.errorMessage}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <div className="flex flex-col gap-0.5">
-                          <button
-                            type="button"
-                            disabled={idx === 0}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (idx > 0) {
-                                const copy = [...localFeeds];
-                                const temp = copy[idx];
-                                copy[idx] = copy[idx - 1];
-                                copy[idx - 1] = temp;
-                                setLocalFeeds(copy);
-                                setSelectedFeedIndex(idx - 1);
-                                onPlaySound?.('click');
-                              }
-                            }}
-                            className="p-0.5 text-slate-400 hover:text-sky-300 disabled:opacity-30 disabled:hover:text-slate-400 cursor-pointer"
-                            title="Переместить вверх"
-                          >
-                            <ArrowUp className="w-3 h-3" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={idx === localFeeds.length - 1}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (idx < localFeeds.length - 1) {
-                                const copy = [...localFeeds];
-                                const temp = copy[idx];
-                                copy[idx] = copy[idx + 1];
-                                copy[idx + 1] = temp;
-                                setLocalFeeds(copy);
-                                setSelectedFeedIndex(idx + 1);
-                                onPlaySound?.('click');
-                              }
-                            }}
-                            className="p-0.5 text-slate-400 hover:text-sky-300 disabled:opacity-30 disabled:hover:text-slate-400 cursor-pointer"
-                            title="Переместить вниз"
-                          >
-                            <ArrowDown className="w-3 h-3" />
-                          </button>
-                        </div>
-
-                        {feed.hashtags && feed.hashtags.length > 0 && (
-                          <span className="hidden sm:inline text-[10px] text-slate-500 font-normal">
-                            #{feed.hashtags.slice(0, 2).join(', #')}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleFeedEnabled(idx);
-                          }}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
-                            isEnabled 
-                              ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/30' 
-                              : 'bg-slate-800 text-slate-400 hover:bg-slate-700 border border-slate-700'
+                  {/* 2-Column Compact Grid of 6 Presets */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {CURATED_FEED_PRESETS.map((preset) => {
+                      const isPresetActive = localFeeds.length > 0 && localFeeds[0]?.category === preset.category;
+                      return (
+                        <div
+                          key={preset.category}
+                          onClick={() => handleLoadPreset(preset)}
+                          className={`p-2 rounded-lg cursor-pointer transition-all border flex flex-col justify-between ${
+                            isPresetActive 
+                              ? 'bg-[#1a170d] border-[#ffcc00]/70 text-[#ffcc00]' 
+                              : 'bg-[#0d141e] border-[#152233] text-slate-300 hover:border-[#ffcc00]/40 hover:bg-[#121b28]'
                           }`}
                         >
-                          {isEnabled ? 'Активен'  : 'Отключен'}
+                          <div className="flex items-center gap-1.5">
+                            {getCategoryIcon(preset.category)}
+                            <span className="text-[11px] font-bold truncate leading-snug">
+                              {preset.category}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
+                            <span>{preset.feeds.length} сайтов</span>
+                            <span className="text-amber-400 font-mono text-[9px]">Загрузить →</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="h-[1px] bg-[#152233] shrink-0" />
+
+                {/* Bottom Section: ИСТОЧНИКИ В ПРЕСЕТЕ (N) */}
+                <div className="flex-1 flex flex-col min-h-0">
+                  <div className="flex items-center justify-between mb-2 shrink-0">
+                    <span className="text-[#ffcc00] font-mono font-bold text-xs uppercase tracking-wide">
+                      ИСТОЧНИКИ В ПРЕСЕТЕ ({localFeeds.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleAddNewFeed}
+                      className="px-2 py-1 bg-[#0c1827] hover:bg-[#13243a] text-slate-200 border border-[#1e3a5f] rounded text-[11px] font-mono font-bold transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3 text-[#38bdf8]" />
+                      <span>Добавить источник</span>
+                    </button>
+                  </div>
+
+                  {/* Vertical Scrollable List of Sources */}
+                  <div className="flex-1 overflow-y-auto pr-1 space-y-1.5 select-none font-mono text-xs">
+                    {localFeeds.map((feed, idx) => {
+                      const isSelected = selectedFeedIndex === idx;
+                      const isEnabled = feed.enabled !== false;
+                      const isError = feed.status === 'error';
+                      const primarySrc = feed.sources?.[0];
+                      const typeLabel = (primarySrc?.type || feed.type || 'rss').toUpperCase();
+
+                      return (
+                        <div
+                          key={feed.id || idx}
+                          onClick={() => {
+                            setSelectedFeedIndex(idx);
+                            onPlaySound?.('click');
+                          }}
+                          className={`p-2 rounded-lg cursor-pointer transition flex items-center justify-between gap-2 border ${
+                            isSelected
+                              ? 'bg-[#1c170d] text-[#ffcc00] font-bold border-[#ffcc00] shadow-sm'
+                              : isError
+                                ? 'bg-[#1a0f12] text-rose-200 border-rose-500/40'
+                                : isEnabled
+                                  ? 'bg-[#0d141e] text-slate-200 hover:bg-[#121b28] border-[#152233]'
+                                  : 'bg-[#080b10] text-slate-500 line-through border-slate-800/40 opacity-70'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${isError ? 'bg-rose-500' : isEnabled ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-slate-800 text-amber-300 font-bold uppercase tracking-wider shrink-0 border border-slate-700">
+                              {typeLabel}
+                            </span>
+                            <span className="truncate text-xs text-slate-100">
+                              {feed.name || 'Без названия'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleFeedEnabled(idx);
+                              }}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition cursor-pointer ${
+                                isEnabled
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-slate-800 text-slate-400 border border-slate-700'
+                              }`}
+                            >
+                              {isEnabled ? 'Включен' : 'Отключен'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const updated = localFeeds.filter((_, i) => i !== idx);
+                                setLocalFeeds(updated);
+                                if (selectedFeedIndex >= updated.length) {
+                                  setSelectedFeedIndex(Math.max(0, updated.length - 1));
+                                }
+                                onPlaySound?.('click');
+                              }}
+                              className="p-1 text-slate-500 hover:text-rose-400 rounded transition cursor-pointer"
+                              title="Удалить"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {localFeeds.length === 0 && (
+                      <div className="p-6 text-center text-slate-500 text-xs">
+                        Список источников пуст. Нажмите «+ Добавить источник».
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* COLUMN 3: Selected Source Settings Workspace */}
+              <div className="flex-1 bg-[#06090e] p-4 lg:p-5 flex flex-col justify-between overflow-y-auto font-mono text-xs">
+                {currentFeed ? (
+                  <div className="space-y-4">
+                    {/* Header of Column 3 */}
+                    <div className="flex items-center justify-between pb-2 border-b border-[#152233]">
+                      <span className="text-[#ffcc00] font-bold text-xs uppercase tracking-wider">
+                        НАСТРОЙКИ ИСТОЧНИКА
+                      </span>
+
+                      <div className="flex items-center gap-2">
+                        {/* Status Toggle Pill */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleFeedEnabled(selectedFeedIndex)}
+                          className={`px-2.5 py-1 rounded text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                            currentFeed.enabled !== false
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
+                              : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700'
+                          }`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${currentFeed.enabled !== false ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                          <span>{currentFeed.enabled !== false ? 'Активен' : 'Отключен'}</span>
+                        </button>
+
+                        {/* Move Up/Down Order */}
+                        <button
+                          type="button"
+                          disabled={selectedFeedIndex === 0}
+                          onClick={() => handleMoveFeed('up')}
+                          className="p-1.5 bg-[#0d141e] border border-[#1e3a5f] rounded text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
+                          title="Переместить вверх"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
                         </button>
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const updated = localFeeds.filter((_, i) => i !== idx);
-                            setLocalFeeds(updated);
-                            if (selectedFeedIndex >= updated.length) {
-                              setSelectedFeedIndex(Math.max(0, updated.length - 1));
-                            }
-                            onPlaySound?.('click');
-                          }}
-                          className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition cursor-pointer"
+                          disabled={selectedFeedIndex === localFeeds.length - 1}
+                          onClick={() => handleMoveFeed('down')}
+                          className="p-1.5 bg-[#0d141e] border border-[#1e3a5f] rounded text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
+                          title="Переместить вниз"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Trash Delete */}
+                        <button
+                          type="button"
+                          onClick={handleDeleteFeed}
+                          className="p-1.5 bg-[#1f1012] border border-rose-900/60 rounded text-rose-300 hover:bg-[#2e1518] cursor-pointer"
                           title="Удалить источник"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
-                  );
-                })}
 
-                {localFeeds.length === 0 && (
-                  <div className="p-6 text-center text-slate-500">
-                    Список источников пуст. Нажмите «Новый» ниже, чтобы добавить первый сайт.
+                    {/* Settings Form Grid */}
+                    <div className="space-y-3.5">
+                      
+                      {/* Row 1: Название источника + Include + Exclude */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-slate-300 font-bold text-[11px] mb-1">
+                            Название источника
+                          </label>
+                          <input
+                            type="text"
+                            value={currentFeed.name || ''}
+                            onChange={(e) => updateCurrentFeed({ name: e.target.value })}
+                            className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8]"
+                            placeholder="ChipDip – Новости и обзоры"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-emerald-400 font-bold text-[11px] mb-1">
+                            Include (обязательно)
+                          </label>
+                          <textarea
+                            value={(currentFeed.keywords || []).join('\n')}
+                            onChange={(e) => updateCurrentFeed({ 
+                              keywords: e.target.value.split('\n').map(t => t.trim()).filter(Boolean) 
+                            })}
+                            rows={2}
+                            className="w-full bg-[#05080c] border border-emerald-900/60 rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-emerald-500 font-mono"
+                            placeholder="мультиметр&#10;осциллограф"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-rose-400 font-bold text-[11px] mb-1">
+                            Exclude (Исключить)
+                          </label>
+                          <textarea
+                            value={(currentFeed.excludeKeywords || []).join('\n')}
+                            onChange={(e) => updateCurrentFeed({ 
+                              excludeKeywords: e.target.value.split('\n').map(t => t.trim()).filter(Boolean) 
+                            })}
+                            rows={2}
+                            className="w-full bg-[#05080c] border border-rose-900/60 rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-rose-500 font-mono"
+                            placeholder="case&#10;cover"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Row 2: Описание + Keyword Mode */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-slate-300 font-bold text-[11px] mb-1">
+                            Описание (опционально)
+                          </label>
+                          <textarea
+                            value={currentFeed.description || ''}
+                            onChange={(e) => updateCurrentFeed({ description: e.target.value })}
+                            rows={2}
+                            className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8]"
+                            placeholder="Инженерные статьи, обзоры оборудования..."
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-slate-300 font-bold text-[11px] mb-1">
+                            Keyword Mode
+                          </label>
+                          <select
+                            value={currentFeed.keywordMode || 'ANY'}
+                            onChange={(e) => updateCurrentFeed({ keywordMode: e.target.value as 'ANY' | 'ALL' })}
+                            className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-2 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8] cursor-pointer"
+                          >
+                            <option value="ANY">Любое слово (ANY) – статья пройдёт, если есть хотя бы одно ключевое слово</option>
+                            <option value="ALL">Все слова (ALL) – статья пройдёт, только если есть все ключевые слова</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Row 3: Тип источника + URL ленты + Проверить button */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-slate-300 font-bold text-[11px] mb-1">
+                            Тип источника
+                          </label>
+                          <select
+                            value={currentPrimarySource?.type || 'rss'}
+                            onChange={(e) => updateCurrentPrimarySource({ type: e.target.value as SourceType })}
+                            className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8] cursor-pointer"
+                          >
+                            <option value="rss">RSS</option>
+                            <option value="atom">Atom</option>
+                            <option value="website">Website</option>
+                            <option value="youtube">YouTube</option>
+                            <option value="search">Search</option>
+                            <option value="reddit">Reddit</option>
+                            <option value="telegram">Telegram</option>
+                            <option value="pikabu">Pikabu</option>
+                            <option value="4pda">4PDA</option>
+                            <option value="ifixit">IFixit</option>
+                          </select>
+                        </div>
+
+                        <div className="md:col-span-2">
+                          <label className="block text-slate-300 font-bold text-[11px] mb-1">
+                            URL ленты
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 flex items-center bg-[#05080c] border border-[#1e3a5f] rounded focus-within:border-[#38bdf8] px-2 py-1">
+                              <LinkIcon className="w-3.5 h-3.5 text-slate-500 mr-2 shrink-0" />
+                              <input
+                                type="text"
+                                value={currentPrimarySource?.url || ''}
+                                onChange={(e) => updateCurrentPrimarySource({ url: e.target.value })}
+                                className="w-full bg-transparent text-slate-100 text-xs focus:outline-hidden"
+                                placeholder="https://www.chipdip.ru/rss"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleCheckUrl}
+                              className={`px-3 py-1.5 rounded font-mono font-bold text-xs transition cursor-pointer shrink-0 border ${
+                                urlCheckStatus === 'valid'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                  : urlCheckStatus === 'invalid'
+                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                    : 'bg-[#0d1622] hover:bg-[#152336] text-slate-200 border-[#1e3a5f]'
+                              }`}
+                            >
+                              {urlCheckStatus === 'valid' ? '✓ Валиден' : urlCheckStatus === 'invalid' ? '✗ Ошибка URL' : 'Проверить'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Row 4: Поисковый запрос / Query */}
+                      <div>
+                        <label className="block text-slate-300 font-bold text-[11px] mb-1">
+                          Поисковый запрос / Query (если поддерживается типом)
+                        </label>
+                        <div className="flex items-center bg-[#05080c] border border-[#1e3a5f] rounded focus-within:border-[#38bdf8] px-2 py-1">
+                          <Search className="w-3.5 h-3.5 text-slate-500 mr-2 shrink-0" />
+                          <input
+                            type="text"
+                            value={currentPrimarySource?.query || ''}
+                            onChange={(e) => updateCurrentPrimarySource({ query: e.target.value })}
+                            className="w-full bg-transparent text-slate-100 text-xs focus:outline-hidden"
+                            placeholder="пайка bga ремонт материнских плат"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Row 5: Язык + Лимит + Обновление */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-slate-300 font-bold text-[11px] mb-1">
+                            Язык (опционально)
+                          </label>
+                          <input
+                            type="text"
+                            value={currentFeed.language || ''}
+                            onChange={(e) => updateCurrentFeed({ language: e.target.value })}
+                            className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8]"
+                            placeholder="ru, en"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-slate-300 font-bold text-[11px] mb-1">
+                            Лимит (шт)
+                          </label>
+                          <input
+                            type="number"
+                            value={currentFeed.maxArticles || 10}
+                            onChange={(e) => updateCurrentFeed({ maxArticles: parseInt(e.target.value) || 10 })}
+                            className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8]"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-slate-300 font-bold text-[11px] mb-1">
+                            Обновление (минуты)
+                          </label>
+                          <input
+                            type="number"
+                            value={currentFeed.refreshInterval || 60}
+                            onChange={(e) => updateCurrentFeed({ refreshInterval: parseInt(e.target.value) || 60 })}
+                            className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8]"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Accordion: ДОПОЛНИТЕЛЬНЫЕ НАСТРОЙКИ */}
+                      <div className="border border-[#152233] rounded-lg overflow-hidden bg-[#0a0f16]">
+                        <button
+                          type="button"
+                          onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+                          className="w-full px-3 py-2 text-left font-mono font-bold text-[11px] text-slate-300 flex items-center justify-between hover:bg-[#0f1722] cursor-pointer"
+                        >
+                          <span className="text-sky-400">ДОПОЛНИТЕЛЬНЫЕ НАСТРОЙКИ</span>
+                          {isAdvancedOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                        </button>
+
+                        {isAdvancedOpen && (
+                          <div className="p-3 border-t border-[#152233] space-y-2 text-slate-300">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input type="checkbox" className="rounded bg-[#05080c] border-[#1e3a5f] text-sky-500" />
+                              <span>Искать полное содержание статей (если источник поддерживает)</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input type="checkbox" defaultChecked className="rounded bg-[#05080c] border-[#1e3a5f] text-sky-500" />
+                              <span>Удалять дубликаты по заголовку и ссылке</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input type="checkbox" className="rounded bg-[#05080c] border-[#1e3a5f] text-sky-500" />
+                              <span>Автоматически переводить на русский язык (если возможно)</span>
+                            </label>
+                          </div>
+                        )}
+                      </div>
+
+                      {testStatusMessage && (
+                        <div className="p-2 rounded bg-sky-950/50 border border-sky-500/40 text-sky-300 text-xs flex items-center gap-2 animate-in fade-in">
+                          <Info className="w-4 h-4 text-sky-400 shrink-0" />
+                          <span>{testStatusMessage}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Bottom Action Bar inside Column 3 */}
+                    <div className="pt-3 border-t border-[#152233] flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleTestFeed}
+                          className="px-3 py-1.5 bg-[#0d1622] hover:bg-[#152336] text-slate-200 border border-[#1e3a5f] rounded font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <FlaskConical className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Тестировать</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleDuplicateFeed}
+                          className="px-3 py-1.5 bg-[#0d1622] hover:bg-[#152336] text-slate-200 border border-[#1e3a5f] rounded font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Copy className="w-3.5 h-3.5 text-sky-400" />
+                          <span>Дублировать</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleDeleteFeed}
+                          className="px-3 py-1.5 bg-[#1f1012] hover:bg-[#2e1518] text-rose-300 border border-rose-900/60 rounded font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Удалить</span>
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onPlaySound?.('success');
+                          setTestStatusMessage('Изменения источника применены локально ✓');
+                          setTimeout(() => setTestStatusMessage(null), 2500);
+                        }}
+                        className="px-4 py-1.5 bg-[#0284c7] hover:bg-[#0369a1] text-white rounded font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-sky-900/30"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Сохранить изменения</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-slate-500 text-center p-8">
+                    <Database className="w-12 h-12 text-slate-700 mb-3" />
+                    <p className="text-sm font-bold text-slate-400">Источник не выбран</p>
+                    <p className="text-xs text-slate-500 mt-1">Выберите источник из списка слева или добавьте новый.</p>
                   </div>
                 )}
               </div>
+            </div>
+          )}
 
-              
-              {localFeeds.length > 0 && selectedFeedIndex >= 0 && selectedFeedIndex < localFeeds.length ? (
-                <div className="bg-[#09111c] border border-[#1e3a5f] rounded-xl p-3 sm:p-4 mt-4">
-                  <FeedConfigEditor 
-                    feed={localFeeds[selectedFeedIndex]} 
-                    onChange={handleUpdateSelectedFeed}
-                    onPlaySound={onPlaySound}
-                  />
-                </div>
-              ) : null}
-
-              {/* Control Buttons Row matching engineering buttons */}
-
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2">
-                <button
-                  onClick={handleAddNewFeed}
-                  className="px-3 py-2 bg-[#0c1929] hover:bg-[#14263d] text-slate-200 border border-[#1e3a5f] rounded font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5 text-[#38bdf8]" />
-                  <span>Новый</span>
-                </button>
-
-                <button
-                  onClick={handleApplyFeed}
-                  className="px-3 py-2 bg-[#0c1929] hover:bg-[#14263d] text-slate-200 border border-[#1e3a5f] rounded font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Применить</span>
-                </button>
-
-                <button
-                  onClick={handleDeleteFeed}
-                  className="px-3 py-2 bg-[#1f1012] hover:bg-[#2e1518] text-rose-300 border border-rose-950/60 rounded font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Удалить</span>
-                </button>
-
-                <button
-                  onClick={() => handleMoveFeed('up')}
-                  className="px-3 py-2 bg-[#0c1929] hover:bg-[#14263d] text-slate-200 border border-[#1e3a5f] rounded font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <ArrowUp className="w-3.5 h-3.5" />
-                  <span>Вверх</span>
-                </button>
-
-                <button
-                  onClick={() => handleMoveFeed('down')}
-                  className="px-3 py-2 bg-[#0c1929] hover:bg-[#14263d] text-slate-200 border border-[#1e3a5f] rounded font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <ArrowDown className="w-3.5 h-3.5" />
-                  <span>Вниз</span>
-                </button>
+          {/* TAB 2: # ФИЛЬТРЫ */}
+          {activeTab === '# ФИЛЬТРЫ' && (
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#0b0e12]/95 space-y-4 font-mono text-xs">
+              <div className="text-slate-400 font-bold uppercase tracking-wider">
+                ГЛОБАЛЬНЫЕ ФИЛЬТРЫ И КЛЮЧЕВЫЕ СЛОВА
               </div>
-
-              {/* Full refresh trigger matching bottom button on screenshot */}
-              <div className="pt-2">
-                <button
-                  onClick={() => {
-                    const nextFeeds = handleApplyFeed();
-                    if (nextFeeds) {
-                      onUpdateFeeds(nextFeeds);
-                    }
-                    onTriggerRefresh?.();
-                    onPlaySound?.('success');
-                  }}
-                  disabled={isRefreshing}
-                  className="w-full py-2.5 bg-[#091e36] hover:bg-[#0f2e52] disabled:bg-[#061221] text-[#38bdf8] disabled:text-[#38bdf8]/50 border border-[#38bdf8]/40 disabled:border-[#38bdf8]/20 rounded font-bold transition flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed shadow-sm"
-                >
-                  <RefreshCw className={`w-4 h-4 text-[#38bdf8] ${isRefreshing ? 'animate-spin text-[#38bdf8]/50' : ''}`} />
-                  <span>{isRefreshing ? 'Идет синхронизация и обработка ИИ...' : '↻ Перераспределить и обработать новости'}</span>
-                </button>
+              <div className="p-4 bg-[#09111c] border border-[#1e3a5f] rounded-lg text-slate-300 space-y-3">
+                <p>Фильтры позволяют централизованно отсекать нежелательные темы или выделять важные ключевые маркеры по всем источникам.</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                  <div>
+                    <label className="block font-bold text-emerald-400 mb-1">Глобальный белый список (Include)</label>
+                    <textarea 
+                      rows={4}
+                      className="w-full bg-[#05080c] border border-emerald-900/60 rounded p-2 text-slate-100 text-xs focus:outline-hidden"
+                      placeholder="ремонт&#10;схема&#10;диагностика"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-rose-400 mb-1">Глобальный черный список (Exclude)</label>
+                    <textarea 
+                      rows={4}
+                      className="w-full bg-[#05080c] border border-rose-900/60 rounded p-2 text-slate-100 text-xs focus:outline-hidden"
+                      placeholder="реклама&#10;розыгрыш&#10;скидка"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
-          {/* TAB 2: ✦ AI-РЕДАКТОР (Exact Prompt Customization from screenshot 2) */}
-          {activeTab === '✦ AI-РЕДАКТОР' && (
-            <div className="space-y-4 animate-in fade-in duration-100 font-mono text-xs">
-              
-              
-              {/* AI Provider Config */}
-              <div className="p-3 bg-[#0d1622] border border-[#1e3a5f] rounded-lg space-y-3">
-                <div className="text-white font-bold flex items-center gap-1.5">
-                  <Database className="w-4 h-4 text-sky-400" />
-                  <span>Настройки провайдера ИИ</span>
-                </div>
-                
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-slate-400 text-[10px] uppercase tracking-wider">Провайдер</label>
-                    <select
-                      value={localProvider}
-                      onChange={(e) => {
-                        setLocalProvider(e.target.value);
-                        if (e.target.value === 'openrouter') setLocalUrl('https://openrouter.ai/api/v1');
-                        else if (e.target.value === 'openai') setLocalUrl('https://api.openai.com/v1');
-                        else setLocalUrl('');
-                      }}
-                      className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2 text-slate-200 text-xs focus:outline-hidden"
-                    >
-                      <option value="gemini">Google Gemini</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="openrouter">OpenRouter</option>
-                      <option value="custom">Custom (OpenAI-compatible)</option>
-                    </select>
-                  </div>
-                  
-                  <div className="space-y-1">
-                    <label className="text-slate-400 text-[10px] uppercase tracking-wider">Модель</label>
-                    <input
-                      type="text"
-                      value={localModel}
-                      onChange={(e) => setLocalModel(e.target.value)}
-                      placeholder={localProvider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-3.5-turbo'}
-                      className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2 text-slate-200 text-xs focus:outline-hidden"
-                    />
-                  </div>
-                  
-                  <div className="space-y-1 sm:col-span-2">
-                    <label className="text-slate-400 text-[10px] uppercase tracking-wider">API Ключ (Сохраняется локально)</label>
-                    <input
-                      type="password"
-                      value={localKey}
-                      onChange={(e) => setLocalKey(e.target.value)}
-                      placeholder="sk-..."
-                      className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2 text-slate-200 text-xs focus:outline-hidden"
-                    />
-                  </div>
-                  
-                  {localProvider !== 'gemini' && (
-                    <div className="space-y-1 sm:col-span-2">
-                      <label className="text-slate-400 text-[10px] uppercase tracking-wider">Base URL</label>
-                      <input
-                        type="text"
-                        value={localUrl}
-                        onChange={(e) => setLocalUrl(e.target.value)}
-                        placeholder="https://api.openai.com/v1"
-                        className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2 text-slate-200 text-xs focus:outline-hidden"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-
-              {/* Quota Saving Mode Toggle */}
-              <div className="p-3 bg-[#0d1622] border border-[#1e3a5f] rounded-lg flex items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="text-white font-bold flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-amber-400" />
-                    <span>Автоматическая AI-обработка новых новостей</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    При отключении автоматической AI-обработки новые ленты загружаются мгновенно без запросов к AI. Обработку можно запускать вручную для нужных статей.
-                  </p>
-                </div>
-                <button
-                  onClick={() => {
-                    onChangeEnableAutoAiProcessing?.(!enableAutoAiProcessing);
-                    onPlaySound?.('click');
-                  }}
-                  className={`px-3.5 py-2 rounded-lg font-bold text-xs transition shrink-0 cursor-pointer flex items-center gap-1.5 shadow-sm ${
-                    enableAutoAiProcessing
-                      ? 'bg-emerald-500 hover:bg-emerald-600 text-slate-950'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-                  }`}
-                >
-                  <span className={`w-2 h-2 rounded-full ${enableAutoAiProcessing ? 'bg-slate-950 animate-ping' : 'bg-slate-500'}`} />
-                  <span>{enableAutoAiProcessing ? 'ВКЛ' : 'ВЫКЛ'}</span>
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div className="text-slate-200 font-bold text-xs">
-                  Промпт редактирования новостей:
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    onClick={() => {
-                      setLocalPrompt(DEFAULT_AI_PROMPTS.engineer);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#101b2b] hover:bg-[#1b2b40] text-sky-300 border border-[#1e3a5f] rounded text-[10px] cursor-pointer"
-                  >
-                    Инженер
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLocalPrompt(DEFAULT_AI_PROMPTS.medical);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#101b2b] hover:bg-[#1b2b40] text-rose-300 border border-[#1e3a5f] rounded text-[10px] cursor-pointer"
-                  >
-                    Кардиолог
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLocalPrompt(DEFAULT_AI_PROMPTS.economist);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#101b2b] hover:bg-[#1b2b40] text-emerald-300 border border-[#1e3a5f] rounded text-[10px] cursor-pointer"
-                  >
-                    Экономист
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLocalPrompt(DEFAULT_AI_PROMPTS.automobilist);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#101b2b] hover:bg-[#1b2b40] text-amber-300 border border-[#1e3a5f] rounded text-[10px] cursor-pointer"
-                  >
-                    Автомобилист
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLocalPrompt(DEFAULT_AI_PROMPTS.it);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#101b2b] hover:bg-[#1b2b40] text-indigo-300 border border-[#1e3a5f] rounded text-[10px] cursor-pointer"
-                  >
-                    IT & Dev
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLocalPrompt(DEFAULT_AI_PROMPTS.business);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#101b2b] hover:bg-[#1b2b40] text-teal-300 border border-[#1e3a5f] rounded text-[10px] cursor-pointer"
-                  >
-                    Бизнес
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLocalPrompt(DEFAULT_AI_PROMPTS.universal);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#101b2b] hover:bg-[#1b2b40] text-slate-300 border border-[#1e3a5f] rounded text-[10px] cursor-pointer"
-                  >
-                    Универсальный
-                  </button>
-                </div>
-              </div>
-
-              {/* Big customizable prompt textarea matching screenshot */}
-              <div className="p-1 bg-[#05080c] border border-[#1e3a5f] rounded-lg shadow-inner">
-                <textarea
-                  value={localPrompt}
-                  onChange={(e) => setLocalPrompt(e.target.value)}
-                  rows={8}
-                  className="w-full bg-transparent p-3 text-slate-100 text-xs font-mono leading-relaxed focus:outline-hidden resize-y"
-                  placeholder="Введите системный промпт для AI-обработки новостей..."
-                />
-              </div>
-
-              <div className="p-3 bg-[#0d1622] border border-[#1e3a5f] rounded text-slate-300 text-[11px] leading-relaxed space-y-1.5">
-                <div className="text-[#38bdf8] font-bold flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Как нейросеть использует этот промпт:</span>
-                </div>
-                <p>
-                  Каждый входящий материал (видео YouTube, статьи 4PDA, посты Reddit и ленты новостей) отправляется в Gemini 3.7 Flash вместе с вашим промптом. Нейросеть генерирует выжимку с сохранением моделей микросхем, симптомов и методов ремонта.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: 🕒 РАСПИСАНИЕ (3 times a day: 6:00, 12:00, 19:00 or first launch after) */}
+          {/* TAB 3: 🕒 РАСПИСАНИЕ */}
           {activeTab === '🕒 РАСПИСАНИЕ' && (
-            <div className="space-y-4 animate-in fade-in duration-100 font-mono text-xs">
-              
-              {/* SECTION: Город и системное время программы */}
-              <div className="p-3.5 bg-[#09111c] border border-[#1e3a5f] rounded-lg space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-slate-200 font-bold flex items-center gap-2">
-                    <Globe className="w-4 h-4 text-[#ffcc00]" />
-                    <span>Город и системное время программы:</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#04070a] border border-[#ffcc00]/50 text-[#ffcc00] font-mono font-bold text-xs">
-                    <Clock className="w-3.5 h-3.5 text-[#ffcc00]" />
-                    <span>{cityClock.timeStr}</span>
-                    <span className="text-[10px] text-slate-400 font-normal">({cityClock.utcOffsetStr})</span>
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#0b0e12]/95 space-y-4 font-mono text-xs">
+              <div className="text-slate-400 font-bold uppercase tracking-wider">
+                РАСПИСАНИЕ АВТООБНОВЛЕНИЯ И ТАЙМЕРЫ
+              </div>
+              <div className="p-4 bg-[#09111c] border border-[#1e3a5f] rounded-lg text-slate-300 space-y-4">
+                <div>
+                  <label className="block text-slate-200 font-bold mb-1">Часы автообновления новостей (в формате 24ч):</label>
+                  <div className="flex gap-2">
+                    {[6, 9, 12, 15, 18, 21].map((hour) => {
+                      const isSelected = localHours.includes(hour);
+                      return (
+                        <button
+                          key={hour}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setLocalHours(localHours.filter(h => h !== hour));
+                            } else {
+                              setLocalHours([...localHours, hour].sort((a, b) => a - b));
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded font-bold border transition cursor-pointer ${
+                            isSelected
+                              ? 'bg-amber-500/20 text-[#ffcc00] border-[#ffcc00]'
+                              : 'bg-[#05080c] text-slate-400 border-[#1e3a5f] hover:text-white'
+                          }`}
+                        >
+                          {hour}:00
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                <p className="text-slate-400 text-[11px] leading-relaxed">
-                  Время во всей программе (часы в шапке, текущий день в календаре, обратные отсчеты рабочих смен, метки заметок) задается городом, выбранным здесь или в блоке погоды слева.
-                </p>
-
-                {/* City Input and Timezone Selector */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div className="space-y-1">
-                    <label className="text-slate-300 font-bold text-[11px] flex items-center gap-1">
-                      <MapPin className="w-3.5 h-3.5 text-[#38bdf8]" />
-                      <span>Город для синхронизации:</span>
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={localCity}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setLocalCity(val);
-                          const detectedTz = getTimeZoneForCity(val);
-                          setLocalTimeZone(detectedTz);
-                        }}
-                        placeholder="Например: Пушкино, Москва, Екатеринбург..."
-                        className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8]"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-slate-300 font-bold text-[11px] flex items-center gap-1">
-                      <Compass className="w-3.5 h-3.5 text-[#38bdf8]" />
-                      <span>Часовой пояс (IANA Timezone):</span>
-                    </label>
+                <div className="pt-2 border-t border-[#1e3a5f]/60">
+                  <label className="block text-slate-200 font-bold mb-1">Город и часовой пояс:</label>
+                  <div className="flex gap-3">
                     <select
-                      value={localTimeZone}
+                      value={localCity}
                       onChange={(e) => {
-                        setLocalTimeZone(e.target.value);
+                        const c = e.target.value;
+                        setLocalCity(c);
+                        const tz = getTimeZoneForCity(c);
+                        setLocalTimeZone(tz);
                       }}
-                      className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8] cursor-pointer"
+                      className="bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden"
                     >
-                      {POPULAR_CITY_PRESETS.map((p) => (
-                        <option key={`${p.name}-${p.tz}`} value={p.tz}>
-                          {p.name} — {p.note} ({p.tz})
-                        </option>
+                      {POPULAR_CITY_PRESETS.map(p => (
+                        <option key={p.name} value={p.name}>{p.name} ({p.tz})</option>
                       ))}
                     </select>
                   </div>
                 </div>
-
-
-              </div>
-
-              <div className="text-[#38bdf8] font-bold text-xs uppercase tracking-wider pt-2">
-                Автоматическое расписание обновления источников
-              </div>
-
-              <div className="p-3.5 bg-[#09111c] border border-[#1e3a5f] rounded-lg space-y-3">
-                <div className="text-slate-200 font-bold">
-                  Обновление происходит 3 раза в день:
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    { hour: 6, label: '06:00 Утра', desc: 'или при первом запуске после 6:00' },
-                    { hour: 12, label: '12:00 Дня', desc: 'или при первом запуске после 12:00' },
-                    { hour: 19, label: '19:00 Вечера', desc: 'или при первом запуске после 19:00' },
-                  ].map((slot) => {
-                    const isChecked = localHours.includes(slot.hour);
-                    return (
-                      <div 
-                        key={slot.hour}
-                        onClick={() => {
-                          if (isChecked) {
-                            setLocalHours(localHours.filter(h => h !== slot.hour));
-                          } else {
-                            setLocalHours([...localHours, slot.hour].sort((a,b) => a-b));
-                          }
-                          onPlaySound?.('click');
-                        }}
-                        className={`p-3 rounded border cursor-pointer transition ${
-                          isChecked 
-                            ? 'bg-[#132338] border-[#38bdf8] text-slate-100 shadow-sm' 
-                            : 'bg-[#06090e] border-[#1b2b40] text-slate-400'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between font-bold text-xs">
-                          <span className={isChecked ? 'text-[#38bdf8]' : 'text-slate-300'}>{slot.label}</span>
-                          <CheckCircle2 className={`w-4 h-4 ${isChecked ? 'text-[#38bdf8]' : 'text-slate-600'}`} />
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-1">
-                          {slot.desc}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Clinical / Workplace Timers */}
-              <div className="pt-2 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-slate-200 font-bold">
-                    Контрольные точки смены и таймеры ({localTimers.length}):
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const sorted = [...localTimers].sort((a, b) => 
-                          parseTargetTimeToSeconds(a.targetTime) - parseTargetTimeToSeconds(b.targetTime)
-                        );
-                        setLocalTimers(sorted);
-                        onPlaySound?.('click');
-                      }}
-                      className="px-2 py-1 bg-[#101b2b] hover:bg-[#1b2b40] text-sky-300 border border-[#1e3a5f] rounded text-[10px] cursor-pointer transition"
-                      title="Упорядочить контрольные точки по времени дня"
-                    >
-                      ⇅ По порядку времени
-                    </button>
-                  </div>
-                </div>
-
-                {/* Quick Presets for shift templates */}
-                <div className="p-2.5 bg-[#05080c] border border-[#1e3a5f] rounded flex flex-wrap items-center gap-2 text-[11px]">
-                  <span className="text-slate-400 font-bold">Шаблоны смен:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLocalTimers([
-                        { id: 't-round', name: 'Утренний обход', targetTime: '08:30', status: 'active' },
-                        { id: 't-patients', name: 'Приём пациентов', targetTime: '11:00', status: 'active' },
-                        { id: 't-lunch', name: 'Обед / перерыв', targetTime: '13:30', status: 'active' },
-                        { id: 't-lecture', name: 'Консилиум / обучение', targetTime: '16:00', status: 'active' },
-                        { id: 't-shift-end', name: 'Конец смены', targetTime: '19:00', status: 'active', isEndShift: true },
-                      ]);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#16202e] hover:bg-[#202f45] text-rose-300 border border-[#2a3f5a] rounded text-[10px] cursor-pointer"
-                  >
-                    🩺 Медицинская смена
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLocalTimers([
-                        { id: 't-plan', name: 'Планерка & приёмка', targetTime: '09:00', status: 'active' },
-                        { id: 't-solder', name: 'Диагностика & пайка', targetTime: '12:00', status: 'active' },
-                        { id: 't-lunch-eng', name: 'Обед / перерыв', targetTime: '14:00', status: 'active' },
-                        { id: 't-delivery', name: 'Выдача аппаратов', targetTime: '17:30', status: 'active' },
-                        { id: 't-close-eng', name: 'Закрытие сервиса', targetTime: '20:00', status: 'active', isEndShift: true },
-                      ]);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#16202e] hover:bg-[#202f45] text-sky-300 border border-[#2a3f5a] rounded text-[10px] cursor-pointer"
-                  >
-                    🛠 Инженерная смена
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLocalTimers([
-                        { id: 't-office-start', name: 'Начало рабочего дня', targetTime: '09:00', status: 'active' },
-                        { id: 't-office-lunch', name: 'Обеденный перерыв', targetTime: '13:00', status: 'active' },
-                        { id: 't-office-sync', name: 'Итоги и синхронизация', targetTime: '17:30', status: 'active' },
-                        { id: 't-office-end', name: 'Завершение дня', targetTime: '18:00', status: 'active', isEndShift: true },
-                      ]);
-                      onPlaySound?.('click');
-                    }}
-                    className="px-2 py-1 bg-[#16202e] hover:bg-[#202f45] text-amber-300 border border-[#2a3f5a] rounded text-[10px] cursor-pointer"
-                  >
-                    💼 Офисный день
-                  </button>
-                </div>
-
-                {/* Timers list with live countdown indicators */}
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {localTimers.map((t, idx) => {
-                    const previewState = calculateTimerState(
-                      t.targetTime,
-                      t.status,
-                      cityClock.hours,
-                      cityClock.minutes,
-                      cityClock.seconds,
-                      true
-                    );
-                    const isDone = previewState.effectiveStatus === 'done';
-
-                    return (
-                      <div
-                        key={t.id}
-                        className="p-2.5 bg-[#09111c] border border-[#1e3a5f] rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                      >
-                        <div className="flex items-center gap-2 flex-1">
-                          <input
-                            type="text"
-                            maxLength={60}
-                            value={t.name}
-                            onChange={(e) => {
-                              const updated = [...localTimers];
-                              updated[idx].name = e.target.value || 'Таймер';
-                              setLocalTimers(updated);
-                            }}
-                            className="bg-[#05080c] border border-[#1e3a5f] rounded px-2.5 py-1 text-slate-200 text-xs flex-1"
-                            placeholder="Название таймера"
-                          />
-                          <input
-                            type="time"
-                            value={t.targetTime}
-                            onChange={(e) => {
-                              const updated = [...localTimers];
-                              updated[idx].targetTime = e.target.value || '12:00';
-                              setLocalTimers(updated);
-                            }}
-                            className="bg-[#05080c] border border-[#1e3a5f] rounded px-2 py-1 text-[#38bdf8] font-bold text-xs w-22 shrink-0 text-center"
-                          />
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          {/* Sound Selector & Preview */}
-                          <select
-                            value={t.soundId || 'success'}
-                            onChange={(e) => {
-                              const updated = [...localTimers];
-                              updated[idx].soundId = e.target.value;
-                              setLocalTimers(updated);
-                              onPlaySound?.(e.target.value);
-                            }}
-                            className="bg-[#05080c] border border-[#1e3a5f] rounded px-2 py-1 text-slate-300 text-[11px]"
-                            title="Звуковой сигнал"
-                          >
-                            <option value="success">🔔 Сигнал 1 (Стандарт)</option>
-                            <option value="chime">🎼 Перезвон</option>
-                            <option value="bell">🔔 Колокол</option>
-                            <option value="alert">🚨 Сирена</option>
-                            <option value="star">✨ Арпеджио</option>
-                          </select>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onPlaySound?.(t.soundId || 'success');
-                            }}
-                            className="p-1 text-[#38bdf8] hover:bg-[#132338] rounded cursor-pointer"
-                            title="Прослушать звук"
-                          >
-                            <Volume2 className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Mute Toggle */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const updated = [...localTimers];
-                              updated[idx].isMuted = !t.isMuted;
-                              setLocalTimers(updated);
-                              onPlaySound?.('click');
-                            }}
-                            className={`p-1 rounded cursor-pointer ${
-                              t.isMuted ? 'text-rose-400 bg-rose-500/10' : 'text-slate-400 hover:text-slate-200'
-                            }`}
-                            title={t.isMuted ? 'Звук отключен (Mute)' : 'Звук включен'}
-                          >
-                            {t.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 opacity-60" />}
-                          </button>
-
-                          {/* Repeat Mode */}
-                          <select
-                            value={t.repeatMode || 'daily'}
-                            onChange={(e) => {
-                              const updated = [...localTimers];
-                              updated[idx].repeatMode = e.target.value as any;
-                              setLocalTimers(updated);
-                              onPlaySound?.('click');
-                            }}
-                            className="bg-[#05080c] border border-[#1e3a5f] rounded px-1.5 py-1 text-slate-300 text-[11px]"
-                            title="Повтор"
-                          >
-                            <option value="daily">🔄 Каждый день</option>
-                            <option value="weekdays">📅 По будням</option>
-                            <option value="none">1️⃣ Однократно</option>
-                          </select>
-
-                          {/* Countdown preview / Status */}
-                          <div className="w-16 text-right font-mono text-[11px]">
-                            {isDone ? (
-                              <span className="text-slate-500 font-bold">✓ Прошло</span>
-                            ) : (
-                              <span className="text-[#38bdf8] font-bold tabular-nums">
-                                {previewState.formattedCountdown}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Delete */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setLocalTimers(localTimers.filter((_, i) => i !== idx));
-                              onPlaySound?.('click');
-                            }}
-                            className="text-slate-500 hover:text-red-400 p-1 cursor-pointer"
-                            title="Удалить таймер"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {localTimers.length === 0 && (
-                    <div className="p-3 text-center text-slate-500 bg-[#05080c] border border-dashed border-[#1e3a5f] rounded text-xs">
-                      Нет таймеров. Добавьте новую контрольную точку или выберите шаблон выше.
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const newT: MedicalTimerItem = {
-                      id: `timer-${Date.now()}`,
-                      name: `Новая контрольная точка`,
-                      targetTime: '18:00',
-                      status: 'active',
-                    };
-                    setLocalTimers([...localTimers, newT]);
-                    onPlaySound?.('click');
-                  }}
-                  className="px-3 py-1.5 bg-[#0c1929] hover:bg-[#14263d] text-slate-200 border border-[#1e3a5f] rounded font-bold flex items-center gap-1.5 cursor-pointer text-xs"
-                >
-                  <Plus className="w-3.5 h-3.5 text-[#38bdf8]" />
-                  <span>Добавить контрольную точку</span>
-                </button>
               </div>
             </div>
           )}
 
-          {/* TAB 4: 🎨 ОФОРМЛЕНИЕ (Custom Wallpapers & Styles) */}
-          {activeTab === '🎨 ОФОРМЛЕНИЕ' && (
-            <div className="space-y-4 animate-in fade-in duration-100 font-mono text-xs">
-              <div className="text-[#38bdf8] font-bold text-xs uppercase tracking-wider">
-                Универсальная настройка стиля и фоновых обоев
+          {/* TAB 4: ✦ AI-РЕДАКТОР */}
+          {activeTab === '✦ AI-РЕДАКТОР' && (
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#0b0e12]/95 space-y-4 font-mono text-xs">
+              <div className="text-slate-400 font-bold uppercase tracking-wider">
+                НАСТРОЙКИ AI-ПРОВАЙДЕРА И СИСТЕМНЫЙ ПРОМПТ
               </div>
-
-              {/* Style presets */}
-              <div className="p-3 bg-[#09111c] border border-[#1e3a5f] rounded-lg space-y-2">
-                <div className="text-slate-200 font-bold">
-                  Выберите стиль приложения:
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {[
-                    { id: 'engineer', label: 'Инженер', desc: 'Пайка, схемы, чипы' },
-                    { id: 'medical', label: 'Кардиолог', desc: 'Клинические гайдлайны' },
-                    { id: 'economist', label: 'Экономист', desc: 'Рынки, финансы, тренды' },
-                    { id: 'automobilist', label: 'Автомобилист', desc: 'ДВС, ТО, автосервис' },
-                    { id: 'it', label: 'IT & Dev', desc: 'Код, релизы, уязвимости' },
-                    { id: 'business', label: 'Бизнес', desc: 'Стартапы и рост' },
-                    { id: 'universal', label: 'Универсальный', desc: 'Любая сфера' },
-                  ].map((st) => (
-                    <button
-                      key={st.id}
-                      onClick={() => {
-                        setLocalStyle(st.id as AppArchetypeStyle);
-                        if (st.id === 'engineer') setLocalPrompt(DEFAULT_AI_PROMPTS.engineer);
-                        if (st.id === 'medical') setLocalPrompt(DEFAULT_AI_PROMPTS.medical);
-                        if (st.id === 'economist') setLocalPrompt(DEFAULT_AI_PROMPTS.economist);
-                        if (st.id === 'automobilist') setLocalPrompt(DEFAULT_AI_PROMPTS.automobilist);
-                        if (st.id === 'it') setLocalPrompt(DEFAULT_AI_PROMPTS.it);
-                        if (st.id === 'business') setLocalPrompt(DEFAULT_AI_PROMPTS.business);
-                        if (st.id === 'universal') setLocalPrompt(DEFAULT_AI_PROMPTS.universal);
-                        onPlaySound?.('click');
-                      }}
-                      className={`p-2.5 rounded text-left border cursor-pointer transition ${
-                        localStyle === st.id
-                          ? 'bg-[#142840] border-[#38bdf8] text-white shadow-sm'
-                          : 'bg-[#06090e] border-[#1b2b40] text-slate-400 hover:text-slate-200'
-                      }`}
+              <div className="p-4 bg-[#09111c] border border-[#1e3a5f] rounded-lg text-slate-300 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-200 font-bold mb-1">AI Провайдер</label>
+                    <select
+                      value={localProvider}
+                      onChange={(e) => setLocalProvider(e.target.value)}
+                      className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden"
                     >
-                      <div className="font-bold text-xs text-sky-300">{st.label}</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">{st.desc}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Wallpaper upload & presets */}
-              <div className="p-3 bg-[#09111c] border border-[#1e3a5f] rounded-lg space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-slate-200 font-bold flex items-center gap-1.5">
-                    <ImageIcon className="w-4 h-4 text-[#38bdf8]" />
-                    <span>Фоновые обои рабочего стола:</span>
+                      <option value="gemini">Google Gemini (По умолчанию)</option>
+                      <option value="openai">OpenAI (GPT-4o / GPT-3.5)</option>
+                      <option value="openrouter">OpenRouter (DeepSeek, Claude, Llama)</option>
+                      <option value="custom">Пользовательский OpenAI-совместимый API</option>
+                    </select>
                   </div>
 
-                  {localWallpaper && (
-                    <button
-                      onClick={() => {
-                        setLocalWallpaper('');
-                        onChangeCustomWallpaper('');
-                        onPlaySound?.('click');
-                      }}
-                      className="text-rose-400 hover:underline text-[10px] cursor-pointer"
-                    >
-                      Сбросить к стандарту
-                    </button>
-                  )}
+                  <div>
+                    <label className="block text-slate-200 font-bold mb-1">API Ключ (Сохраняется на сервере)</label>
+                    <input
+                      type="password"
+                      value={localKey}
+                      onChange={(e) => setLocalKey(e.target.value)}
+                      placeholder={currentUser?.hasAiApiKey ? '•••••••• (Ключ уже сохранен)' : 'Введите ваш API Key'}
+                      className="w-full bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden"
+                    />
+                  </div>
                 </div>
 
-                {/* Upload custom button */}
-                <div className="flex gap-2">
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleImageUpload}
-                    accept="image/*"
-                    className="hidden"
-                  />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-3.5 py-2 bg-[#122238] hover:bg-[#1a3150] text-[#38bdf8] border border-[#38bdf8]/50 rounded font-bold flex items-center gap-2 cursor-pointer transition text-xs"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Загрузить свою картинку (с диска)</span>
-                  </button>
-
-                  <input
-                    type="text"
-                    value={localWallpaper.startsWith('data:') ? 'Пользовательское изображение загружено' : localWallpaper}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setLocalWallpaper(val);
-                      onChangeCustomWallpaper(val);
-                    }}
-                    placeholder="Или вставьте прямую ссылку на картинку (https://...)"
-                    className="flex-1 bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-2 text-xs text-slate-200 focus:outline-hidden"
+                <div>
+                  <label className="block text-slate-200 font-bold mb-1">Пользовательский системный AI-промпт:</label>
+                  <textarea
+                    value={localPrompt}
+                    onChange={(e) => setLocalPrompt(e.target.value)}
+                    rows={4}
+                    className="w-full bg-[#05080c] border border-[#1e3a5f] rounded p-2.5 text-slate-100 text-xs focus:outline-hidden"
+                    placeholder="Инструкция для ИИ по суммаризации статей..."
                   />
                 </div>
+              </div>
+            </div>
+          )}
 
-                {/* Wallpapers presets thumbnails */}
-                <div className="space-y-1.5 pt-1">
-                  <div className="text-[11px] text-slate-400">Готовые высококачественные обои:</div>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                    {presetWallpapers.map((pw, i) => (
-                      <div
-                        key={i}
-                        onClick={() => {
-                          setLocalWallpaper(pw.url);
-                          onChangeCustomWallpaper(pw.url);
-                          onPlaySound?.('click');
-                        }}
-                        className={`relative rounded border overflow-hidden cursor-pointer group h-16 transition ${
-                          localWallpaper === pw.url ? 'border-[#38bdf8] ring-2 ring-[#38bdf8]/40' : 'border-[#1e3a5f] hover:border-sky-400'
+          {/* TAB 5: A+ ДОСТУПНОСТЬ */}
+          {activeTab === 'A+ ДОСТУПНОСТЬ' && (
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#0b0e12]/95 space-y-4 font-mono text-xs">
+              <div className="text-slate-400 font-bold uppercase tracking-wider">
+                МАСШТАБ И ЗРИТЕЛЬНЫЙ КОМФОРТ
+              </div>
+              <div className="p-4 bg-[#09111c] border border-[#1e3a5f] rounded-lg text-slate-300 space-y-4">
+                <div>
+                  <label className="block text-slate-200 font-bold mb-2">Масштаб интерфейса:</label>
+                  <div className="flex gap-2">
+                    {[100, 125, 150, 175, 200].map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setLocalScale(s)}
+                        className={`px-4 py-2 rounded font-bold border transition cursor-pointer ${
+                          localScale === s
+                            ? 'bg-sky-500/20 text-sky-300 border-sky-400'
+                            : 'bg-[#05080c] text-slate-400 border-[#1e3a5f] hover:text-white'
                         }`}
                       >
-                        <img
-                          src={pw.url}
-                          alt={pw.name}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover group-hover:scale-105 transition"
-                        />
-                        <div className="absolute inset-0 bg-black/40 flex items-end p-1 text-[9px] text-white font-bold truncate">
-                          {pw.name}
-                        </div>
-                      </div>
+                        {s}%
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -1460,74 +1296,70 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
             </div>
           )}
 
-          {/* TAB 5: # ФИЛЬТРЫ */}
-          {activeTab === '# ФИЛЬТРЫ' && (
-            <div className="space-y-4 animate-in fade-in duration-100 font-mono text-xs">
-              <h3 className="text-[#38bdf8] font-bold text-xs uppercase tracking-wider">
-                Ключевые слова & Фильтрация новостей
-              </h3>
-              <p className="text-slate-300 font-sans">
-                Приоритетные хэштеги и фильтрация по категориям:
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {['FRP', 'Android', 'Apple', 'Микропайка', 'PMIC', 'Ремонт техники', '4PDA', 'BGA Reball', 'Google Account', 'Схемы'].map((kw) => (
-                  <span key={kw} className="px-2.5 py-1 rounded bg-[#0e1a2b] text-[#38bdf8] border border-[#1e3a5f] text-xs">
-                    #{kw}
-                  </span>
-                ))}
+          {/* TAB 6: 🎨 ОФОРМЛЕНИЕ */}
+          {activeTab === '🎨 ОФОРМЛЕНИЕ' && (
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#0b0e12]/95 space-y-4 font-mono text-xs">
+              <div className="text-slate-400 font-bold uppercase tracking-wider">
+                ОФОРМЛЕНИЕ И ФОНОВЫЕ ОБОИ
               </div>
-            </div>
-          )}
-
-          {/* TAB 6: A+ ДОСТУПНОСТЬ */}
-          {activeTab === 'A+ ДОСТУПНОСТЬ' && (
-            <div className="space-y-4 animate-in fade-in duration-100 font-mono text-xs">
-              <h3 className="text-[#38bdf8] font-bold text-xs uppercase tracking-wider">
-                Параметры масштабирования интерфейса
-              </h3>
-
-              <div className="p-4 bg-[#09111c] border border-[#1e3a5f] rounded-md space-y-4 font-mono text-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#1b2b40]">
-                  <label className="text-slate-200 font-bold">
-                    Масштаб интерфейса:
-                  </label>
-                  <select
-                    value={localScale}
-                    onChange={(e) => setLocalScale(Number(e.target.value))}
-                    className="bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8] cursor-pointer"
-                  >
-                    <option value={100}>100 % (Стандарт)</option>
-                    <option value={125}>125 %</option>
-                    <option value={150}>150 % (Увеличенный)</option>
-                    <option value={175}>175 %</option>
-                    <option value={200}>200 % (Максимальный)</option>
-                  </select>
+              <div className="p-4 bg-[#09111c] border border-[#1e3a5f] rounded-lg text-slate-300 space-y-4">
+                <div>
+                  <label className="block text-slate-200 font-bold mb-2">Инженерная стилистика приложения:</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {[
+                      { id: 'engineer', name: 'Инженерный (Киберпанк)' },
+                      { id: 'minimal', name: 'Минимализм (Slate)' },
+                      { id: 'medical', name: 'Клинический (Deep Blue)' }
+                    ].map((st) => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => setLocalStyle(st.id as AppArchetypeStyle)}
+                        className={`p-2.5 rounded text-left font-bold border transition cursor-pointer ${
+                          localStyle === st.id
+                            ? 'bg-[#ffcc00]/10 text-[#ffcc00] border-[#ffcc00]'
+                            : 'bg-[#05080c] text-slate-400 border-[#1e3a5f] hover:text-white'
+                        }`}
+                      >
+                        {st.name}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <label className="text-slate-200 font-bold">
-                    Острота зрения (ориентир):
-                  </label>
-                  <select
-                    value={localAcuity}
-                    onChange={(e) => setLocalAcuity(e.target.value)}
-                    className="bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden focus:border-[#38bdf8] cursor-pointer"
-                  >
-                    <option value="Не указывать">Не указывать</option>
-                    <option value="-1.0 D">-1.0 D</option>
-                    <option value="-2.0 D">-2.0 D</option>
-                    <option value="-3.0 D">-3.0 D</option>
-                    <option value="-4.0 D">-4.0 D</option>
-                    <option value="-5.0 D и более">-5.0 D и более</option>
-                  </select>
+                <div className="pt-2 border-t border-[#1e3a5f]/60">
+                  <label className="block text-slate-200 font-bold mb-2">Фоновое изображение (URL или загрузка):</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={localWallpaper}
+                      onChange={(e) => setLocalWallpaper(e.target.value)}
+                      placeholder="https://images.unsplash.com/..."
+                      className="flex-1 bg-[#05080c] border border-[#1e3a5f] rounded px-3 py-1.5 text-slate-100 text-xs focus:outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-3 py-1.5 bg-[#0d1622] hover:bg-[#152336] text-slate-200 border border-[#1e3a5f] rounded font-bold cursor-pointer"
+                    >
+                      Загрузить файл
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 7: ♥ О ПРОЕКТЕ (Exact Layout from Screenshot 1) */}
+          {/* TAB 7: ♥ О ПРОЕКТЕ */}
           {activeTab === '♥ О ПРОЕКТЕ' && (
-            <div className="space-y-4 animate-in fade-in duration-100 font-mono text-xs">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#0b0e12]/95 space-y-4 font-mono text-xs">
               <div className="text-sky-400 font-bold text-sm tracking-wider uppercase">
                 BELKIN DESK ENGINEER 2.0
               </div>
@@ -1593,7 +1425,6 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
 
               {/* Donation box with yellow QR code matching screenshot 1 */}
               <div className="p-4 bg-[#09111c] border border-[#1e3a5f] rounded-lg flex flex-col sm:flex-row items-center gap-5">
-                {/* Yellow QR box container */}
                 <div className="bg-[#ffcc00] p-3 rounded-lg flex flex-col items-center justify-center shrink-0 shadow-lg">
                   <QrCode className="w-24 h-24 text-black" />
                 </div>
@@ -1619,12 +1450,12 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
               </div>
             </div>
           )}
-          </div>
         </div>
 
         {/* Modal Bottom Actions matching screenshots */}
-        <div className="bg-[#080b0f] border-t border-[#1b2b40] px-4 py-3 flex items-center justify-between shrink-0 select-none">
+        <div className="bg-[#05080c] border-t border-[#152233] px-4 py-3 flex items-center justify-between shrink-0 select-none">
           <button
+            type="button"
             onClick={() => {
               onClose();
               onPlaySound?.('click');
@@ -1635,6 +1466,20 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
           </button>
 
           <button
+            type="button"
+            onClick={() => {
+              onPlaySound?.('click');
+              onTriggerRefresh?.(localFeeds);
+            }}
+            disabled={isRefreshing}
+            className="px-4 py-2 rounded bg-[#0d1622] hover:bg-[#152336] text-[#ffcc00] font-mono text-xs transition cursor-pointer border border-[#ffcc00]/40 flex items-center gap-2 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>Перераспределить и обработать новости во всех источниках</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleSaveAll}
             className="px-5 py-2 rounded bg-[#0284c7] hover:bg-[#0369a1] text-white font-mono font-bold text-xs transition cursor-pointer shadow-md shadow-sky-900/40 flex items-center gap-1.5"
           >

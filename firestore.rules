@@ -27,6 +27,11 @@ service cloud.firestore {
       }
     }
 
+    // User secrets (AI keys, provider tokens) - SERVER ONLY, strictly forbidden for client read/write
+    match /userSecrets/{userId} {
+      allow read, write: if false;
+    }
+
     // System configurations, curated feed registries, and app state
     match /system/{document=**} {
       allow read: if true;

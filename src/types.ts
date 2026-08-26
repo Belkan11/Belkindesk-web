@@ -62,8 +62,8 @@ export interface AccessibilityConfig {
 
 export interface Article {
   id: string;
-  feedId: string;
-  feedTitle: string;
+  feedId?: string;
+  feedTitle?: string;
   feedCategory?: string;
   feedIcon?: string;
   title: string;
@@ -409,6 +409,7 @@ export interface UserProfile {
   accessibility?: AccessibilityConfig;
   aiProvider?: 'gemini' | 'openai' | 'openrouter' | 'custom';
   aiApiKey?: string;
+  hasAiApiKey?: boolean;
   aiModel?: string;
   aiUrl?: string;
   version?: number;

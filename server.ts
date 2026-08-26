@@ -5,8 +5,110 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { XMLParser } from "fast-xml-parser";
+import { initializeApp, getApps, getApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 
 import dns from 'dns/promises';
+
+// ----------------------------------------------------
+// Firebase Admin SDK & User Secrets Setup
+// ----------------------------------------------------
+let firebaseConfig: any = {};
+try {
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  }
+} catch (e) {
+  console.warn("Could not read firebase-applet-config.json:", e);
+}
+
+if (!getApps().length && firebaseConfig.projectId) {
+  try {
+    initializeApp({
+      projectId: firebaseConfig.projectId,
+    });
+  } catch (e) {
+    console.warn("Failed to initialize firebase-admin:", e);
+  }
+}
+
+let adminDb: FirebaseFirestore.Firestore | null = null;
+try {
+  if (getApps().length) {
+    const dbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
+      ? firebaseConfig.firestoreDatabaseId
+      : undefined;
+    adminDb = dbId ? getAdminFirestore(getApp(), dbId) : getAdminFirestore(getApp());
+  }
+} catch (e) {
+  console.warn("Failed to initialize admin Firestore:", e);
+}
+
+export interface UserAiSecret {
+  provider?: 'gemini' | 'openai' | 'openrouter' | 'custom';
+  apiKey?: string;
+  model?: string;
+  url?: string;
+  customPrompt?: string;
+  updatedAt?: string;
+}
+
+async function getUserAiSecret(uid: string): Promise<UserAiSecret | null> {
+  if (!uid || !adminDb) return null;
+  try {
+    const docSnap = await adminDb.collection("userSecrets").doc(uid).get();
+    if (docSnap.exists) {
+      return docSnap.data() as UserAiSecret;
+    }
+  } catch (err) {
+    console.warn(`[UserSecrets] Error fetching secret for user ${uid}:`, err);
+  }
+  return null;
+}
+
+async function saveUserAiSecret(uid: string, secret: Partial<UserAiSecret>): Promise<void> {
+  if (!uid) throw new Error("User ID is required");
+  if (!adminDb) throw new Error("Firestore Admin is not available");
+
+  const docRef = adminDb.collection("userSecrets").doc(uid);
+  const existing = await getUserAiSecret(uid);
+
+  const payload: UserAiSecret = {
+    provider: secret.provider || existing?.provider || 'gemini',
+    apiKey: secret.apiKey !== undefined && secret.apiKey !== '' ? secret.apiKey : (existing?.apiKey || ''),
+    model: secret.model !== undefined ? secret.model : (existing?.model || ''),
+    url: secret.url !== undefined ? secret.url : (existing?.url || ''),
+    customPrompt: secret.customPrompt !== undefined ? secret.customPrompt : (existing?.customPrompt || ''),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await docRef.set(payload, { merge: true });
+}
+
+async function deleteUserAiSecret(uid: string): Promise<void> {
+  if (!uid) return;
+  if (!adminDb) throw new Error("Firestore Admin is not available");
+  await adminDb.collection("userSecrets").doc(uid).delete();
+}
+
+async function getVerifiedUid(req: express.Request): Promise<string | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return null;
+  }
+  const token = authHeader.split(" ")[1];
+  if (!token) return null;
+
+  try {
+    if (!getApps().length) return null;
+    const decoded = await getAuth(getApp()).verifyIdToken(token);
+    return decoded?.uid || null;
+  } catch (err) {
+    return null;
+  }
+}
 
 async function isUrlSafeForSsrf(urlString: string): Promise<boolean> {
   try {
@@ -153,6 +255,50 @@ export const aiProviderRegistry = {
   openai: (baseUrl: string, apiKey: string) => new OpenAICompatibleProvider(baseUrl, apiKey)
 };
 
+async function resolveAiContext(req: express.Request): Promise<{ provider: AIProvider; model?: string; customPrompt?: string }> {
+  let providerType = 'gemini';
+  let apiKey: string | undefined = undefined;
+  let model: string | undefined = undefined;
+  let url: string | undefined = undefined;
+  let customPrompt: string | undefined = undefined;
+
+  // 1. Authenticated user secret lookup from server-side /userSecrets/{uid}
+  const uid = await getVerifiedUid(req);
+  if (uid) {
+    const secret = await getUserAiSecret(uid);
+    if (secret) {
+      if (secret.provider) providerType = secret.provider;
+      if (secret.apiKey) apiKey = secret.apiKey;
+      if (secret.model) model = secret.model;
+      if (secret.url) url = secret.url;
+      if (secret.customPrompt) customPrompt = secret.customPrompt;
+    }
+  }
+
+  // 2. Client headers fallback / overrides
+  if (!model && req.headers['x-user-ai-model']) {
+    model = String(req.headers['x-user-ai-model']);
+  }
+  if (!url && req.headers['x-user-ai-url']) {
+    url = String(req.headers['x-user-ai-url']);
+  }
+  if (!apiKey && req.headers['x-user-ai-key']) {
+    apiKey = String(req.headers['x-user-ai-key']);
+  }
+  if (req.headers['x-user-ai-provider']) {
+    providerType = String(req.headers['x-user-ai-provider']);
+  }
+
+  let provider: AIProvider;
+  if (providerType === 'openai' || providerType === 'openrouter' || providerType === 'custom') {
+    provider = aiProviderRegistry.openai(url || 'https://api.openai.com/v1', apiKey || '');
+  } else {
+    provider = aiProviderRegistry.gemini(apiKey);
+  }
+
+  return { provider, model, customPrompt };
+}
+
 function getAiProvider(req?: any): AIProvider {
   if (!req || !req.headers) return aiProviderRegistry.gemini();
   const provider = req.headers['x-user-ai-provider'] as string || 'gemini';
@@ -164,6 +310,81 @@ function getAiProvider(req?: any): AIProvider {
   }
   return aiProviderRegistry.gemini(key);
 }
+
+// ----------------------------------------------------
+// Secure User AI Credentials API Endpoints
+// ----------------------------------------------------
+app.get("/api/user/ai-credentials", async (req, res) => {
+  const uid = await getVerifiedUid(req);
+  if (!uid) {
+    res.status(401).json({ error: "Не авторизован" });
+    return;
+  }
+
+  try {
+    const secret = await getUserAiSecret(uid);
+    res.json({
+      success: true,
+      provider: secret?.provider || 'gemini',
+      model: secret?.model || '',
+      url: secret?.url || '',
+      hasApiKey: !!(secret?.apiKey && secret.apiKey.trim().length > 0),
+      customPrompt: secret?.customPrompt || '',
+    });
+  } catch (err: any) {
+    console.error("Error loading user AI credentials:", err);
+    res.status(500).json({ error: "Ошибка получения настроек AI" });
+  }
+});
+
+app.post("/api/user/ai-credentials", async (req, res) => {
+  const uid = await getVerifiedUid(req);
+  if (!uid) {
+    res.status(401).json({ error: "Не авторизован" });
+    return;
+  }
+
+  const { provider, apiKey, model, url, customPrompt } = req.body;
+
+  try {
+    await saveUserAiSecret(uid, {
+      provider,
+      apiKey: apiKey !== undefined ? String(apiKey).trim() : undefined,
+      model: model !== undefined ? String(model).trim() : undefined,
+      url: url !== undefined ? String(url).trim() : undefined,
+      customPrompt: customPrompt !== undefined ? String(customPrompt).trim() : undefined,
+    });
+
+    const updated = await getUserAiSecret(uid);
+    res.json({
+      success: true,
+      provider: updated?.provider || 'gemini',
+      model: updated?.model || '',
+      url: updated?.url || '',
+      hasApiKey: !!(updated?.apiKey && updated.apiKey.trim().length > 0),
+      customPrompt: updated?.customPrompt || '',
+    });
+  } catch (err: any) {
+    console.error("Error saving user AI credentials:", err);
+    res.status(500).json({ error: "Ошибка сохранения настроек AI" });
+  }
+});
+
+app.delete("/api/user/ai-credentials", async (req, res) => {
+  const uid = await getVerifiedUid(req);
+  if (!uid) {
+    res.status(401).json({ error: "Не авторизован" });
+    return;
+  }
+
+  try {
+    await deleteUserAiSecret(uid);
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Error deleting user AI credentials:", err);
+    res.status(500).json({ error: "Ошибка удаления настроек AI" });
+  }
+});
 
 // Setup XML Parser with entity decoding
 const xmlParser = new XMLParser({
@@ -1238,11 +1459,10 @@ app.post("/api/ai/discover-feeds", async (req, res) => {
 - tags: массив из 3-4 ключевых тегов (например ["AI", "Habr", "Python"])
 - confidence: "verified" | "suggested"`;
 
-    const provider = getAiProvider(req);
-    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
+    const { provider, model: secretModel } = await resolveAiContext(req);
+    const aiModel = (req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined) || secretModel;
     const response = await provider.generateContent({
       model: aiModel,
-      // model: "gemini-3.7-flash", omitted as provider handles it
       prompt: `Подбери качественные RSS потоки по следующему запросу пользователя: "${prompt}". Обязательно укажи реальные URL-адреса потоков.`,
       systemInstruction,
         
@@ -1523,12 +1743,13 @@ app.post("/api/ai/process-articles", async (req, res) => {
 
 ${customPrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗОВАТЕЛЯ ИЗ НАСТРОЕК:\n${customPrompt}` : 'Фокусируйся на фактах, детальном изложении, инженерной/медицинской точности и полном раскрытии терминов и моделей.'}`;
 
-    const provider = getAiProvider(req);
-    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
+    const { provider, model: secretModel, customPrompt: secretPrompt } = await resolveAiContext(req);
+    const aiModel = (req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined) || secretModel;
+    const effectivePrompt = customPrompt || secretPrompt;
     const response = await provider.generateContent({
       model: aiModel,
       prompt: `Список статей для обработки и форматирования:\n\n${formattedList}`,
-      systemInstruction,
+      systemInstruction: `${systemInstruction}\n\n${effectivePrompt ? `ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ПОЛЬЗОВАТЕЛЯ ИЗ НАСТРОЕК:\n${effectivePrompt}` : ''}`,
         
         responseSchema: {
           type: Type.OBJECT,
@@ -1652,12 +1873,13 @@ app.post("/api/ai/summarize-article", async (req, res) => {
 
 ${customPrompt && customPrompt.trim().length > 5 ? `ОБЯЗАТЕЛЬНО СЛЕДУЙ ПРОМПТУ ОБРАБОТКИ ИЗ НАСТРОЕК ПОЛЬЗОВАТЕЛЯ:\n${customPrompt.trim()}` : 'Исключи всю воду, вводные фразы, кликбейт и рекламные клише. Сохрани все важные термины, формулы, измерения и числа.'}`;
 
-    const provider = getAiProvider(req);
-    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
+    const { provider, model: secretModel, customPrompt: secretPrompt } = await resolveAiContext(req);
+    const aiModel = (req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined) || secretModel;
+    const effectivePrompt = customPrompt || secretPrompt;
     const response = await provider.generateContent({
       model: aiModel,
       prompt: `Заголовок статьи: ${article.title}\nИсточник: ${article.feedTitle || 'Источник'}\nСсылка: ${article.link}\n\nТекст публикации:\n${articleText.slice(0, 10000)}`,
-      systemInstruction,
+      systemInstruction: `${systemInstruction}\n\n${effectivePrompt && effectivePrompt.trim().length > 5 ? `ОБЯЗАТЕЛЬНО СЛЕДУЙ ПРОМПТУ ОБРАБОТКИ ИЗ НАСТРОЕК ПОЛЬЗОВАТЕЛЯ:\n${effectivePrompt.trim()}` : ''}`,
         
         responseSchema: {
           type: Type.OBJECT,
@@ -1721,19 +1943,20 @@ app.post("/api/ai/summarize", async (req, res) => {
   }
 
   try {
+    const { provider, model: secretModel, customPrompt: secretPrompt } = await resolveAiContext(req);
+    const aiModel = (req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined) || secretModel;
+    const effectivePrompt = customPrompt || secretPrompt;
     const defaultInstruction = `Ты AI-редактор и технический переводчик для BelkinDESK.
 Твоя задача — составить грамотное, качественное единое содержание материала на русском языке без воды и без шаблонного дробления на части.
 Сохраняй важные факты, цифры, маркировки компонентов, параметры и практическую пользу.`;
 
-    const systemInstruction = customPrompt && customPrompt.trim().length > 10
-      ? `${customPrompt.trim()}\n\nВерни структурированный ответ в JSON с полями:
+    const systemInstruction = effectivePrompt && effectivePrompt.trim().length > 10
+      ? `${effectivePrompt.trim()}\n\nВерни структурированный ответ в JSON с полями:
 - content: связный единый текст выжимки статьи на русском языке
 - summaryOneLine: 1 емкое предложение сути
 - estimatedReadMinutes: число минут чтения оригинала`
       : defaultInstruction;
 
-    const provider = getAiProvider(req);
-    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
     const response = await provider.generateContent({
       model: aiModel,
       prompt: `Заголовок материала: ${title || "Без заголовка"}\n\nТекст/сниппет публикации:\n${content.slice(0, 8000)}\n\nРежим: ${mode}`,
@@ -1795,8 +2018,8 @@ app.post("/api/ai/digest", async (req, res) => {
 Твоя задача — составить утренний/вечерний дайджест главных новостей на русском языке по подпискам пользователя.
 Сгруппируй важнейшие события, выдели тренды и составь короткие понятные выводы.`;
 
-    const provider = getAiProvider(req);
-    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
+    const { provider, model: secretModel } = await resolveAiContext(req);
+    const aiModel = (req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined) || secretModel;
     const response = await provider.generateContent({
       model: aiModel,
       prompt: `Категория: ${category || "Все подписки"}\n\nСвежие публикации:\n${articlesList}`,
@@ -1864,8 +2087,8 @@ app.post("/api/ai/ask-feeds", async (req, res) => {
 Ответь на вопрос пользователя, опираясь на информацию из его свежих статей.
 Приводи конкретные факты, источники и ссылки. Если информации недостаточно в лентах, дай общий экспертный ответ и поясни это.`;
 
-    const provider = getAiProvider(req);
-    const aiModel = req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined;
+    const { provider, model: secretModel } = await resolveAiContext(req);
+    const aiModel = (req.headers['x-user-ai-model'] ? String(req.headers['x-user-ai-model']) : undefined) || secretModel;
     const response = await provider.generateContent({
       model: aiModel,
       prompt: `Вопрос пользователя: "${query}"\n\nКонтекст из лент:\n${context}`,

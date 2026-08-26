@@ -125,6 +125,7 @@ export async function saveUserProfileToFirestore(user: UserProfile): Promise<voi
 
     const payload = { ...user };
     delete payload.password; // CRITICAL: Strip plain text password before persisting to Firestore
+    delete (payload as any).aiApiKey; // CRITICAL: AI API key must never be stored in /users/{uid}
 
     let nextVersion = (user.version || 0) + 1;
     const nowIso = new Date().toISOString();
@@ -220,6 +221,7 @@ export async function saveUserProfileFieldsToFirestore(
 
     const patchPayload: Record<string, any> = { ...partialFields };
     delete patchPayload.password;
+    delete patchPayload.aiApiKey; // CRITICAL: AI API key must never be stored in /users/{uid}
 
     let nextVersion = 1;
     const nowIso = new Date().toISOString();
