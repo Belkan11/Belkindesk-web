@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, MedicalNote, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle } from '../types';
 import { auth } from '../utils/firebase';
+import { sanitizeProfilesForBackup } from '../utils/sanitizeBackup';
 
 const isDevMode = typeof window !== 'undefined' && (
   window.location.hostname === 'localhost' ||
@@ -222,11 +223,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   // Google Drive & Full Database Export
   const handleExportBackup = () => {
+    const sanitizedProfiles = sanitizeProfilesForBackup(allProfiles);
     const backupData = {
       version: 'BelkinDESK_v3',
       exportDate: new Date().toISOString(),
       exportedBy: `${currentUser.displayName} (${currentUser.username})`,
-      profiles: allProfiles,
+      profiles: sanitizedProfiles,
       currentSession: {
         notes,
         timers,

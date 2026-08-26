@@ -48,6 +48,7 @@ import {
 import { FeedConfig, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle, UserProfile, SourceType, NewsSource } from '../types';
 import { MEDICAL_FEEDS, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS, CURATED_FEED_PRESETS } from '../data/curatedFeeds';
 import { INITIAL_MEDICAL_TIMERS, saveAISettings } from '../utils/storage';
+import { saveAiCredentialsToServer } from '../utils/aiCredentials';
 import { 
   getStoredCity, 
   getStoredTimeZone, 
@@ -273,25 +274,55 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
     setIsDirty(true);
   };
 
-  const handleSaveAll = () => {
+  const [aiSaveError, setAiSaveError] = useState<string | null>(null);
+
+  const handleSaveAll = async () => {
     try {
+      setAiSaveError(null);
+      const rawKey = localKey.trim();
+      let hasKeyFlag = !!currentUser?.hasAiApiKey;
+
+      // 1. If user entered a new API key, save to server first
+      if (rawKey.length > 0) {
+        try {
+          const res = await saveAiCredentialsToServer({
+            provider: localProvider,
+            apiKey: rawKey,
+            model: localModel.trim(),
+            url: localUrl.trim(),
+            customPrompt: localPrompt.trim(),
+          });
+          if (!res.success) {
+            // On error: DO NOT clear input, DO NOT show success, show error
+            setAiSaveError(res.error || 'Ошибка при сохранении API ключа на сервере');
+            return;
+          }
+          hasKeyFlag = true;
+          // Clear the local plain text key input once saved
+          setLocalKey('');
+        } catch (err: any) {
+          setAiSaveError(err.message || 'Ошибка сети при обращении к серверу');
+          return;
+        }
+      }
+
       const feedsToSave = localFeeds;
       
-      // 1. Save local weather to localStorage
+      // 2. Save local weather to localStorage
       localStorage.setItem('belkin_weather_city', localCity);
       localStorage.setItem('belkin_weather_tz', localTimeZone);
 
-      // Save AI settings through the secure server-side mechanism
+      // Save non-secret AI settings to localStorage
       saveAISettings(
         localProvider as any,
-        localKey.trim() || undefined,
+        rawKey,
         localModel.trim(),
         localUrl.trim(),
         currentUser,
         () => {}
       );
 
-      // 2. Prepare the consolidated updates object
+      // 3. Prepare the consolidated updates object
       const updates: Partial<UserProfile> = {
         feeds: feedsToSave,
         timers: localTimers,
@@ -310,15 +341,10 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
         aiProvider: localProvider as any,
         aiModel: localModel.trim(),
         aiUrl: localUrl.trim(),
-        hasAiApiKey: !!(localKey.trim() || currentUser?.hasAiApiKey)
+        hasAiApiKey: hasKeyFlag,
       };
 
-      // Clear the local plain text key input once saved
-      if (localKey.trim()) {
-        setLocalKey('');
-      }
-
-      // 3. Save everything with a single atomic callback to avoid race conditions
+      // 4. Save everything with a single atomic callback to avoid race conditions
       if (onSaveAllWorkspaceSettings) {
         onSaveAllWorkspaceSettings(updates);
       } else {
@@ -354,8 +380,9 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       // Trigger a refresh if feeds changed
       onTriggerRefresh?.(feedsToSave);
       
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setAiSaveError(err.message || 'Ошибка сохранения настроек');
     }
   };
 
@@ -1300,6 +1327,12 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                     placeholder="Инструкция для ИИ по суммаризации статей..."
                   />
                 </div>
+
+                {aiSaveError && (
+                  <div className="p-3 bg-rose-950/40 border border-rose-500/40 rounded-lg text-rose-300 text-xs font-mono">
+                    {aiSaveError}
+                  </div>
+                )}
               </div>
             </div>
           )}

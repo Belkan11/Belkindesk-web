@@ -8,6 +8,20 @@ import { XMLParser } from "fast-xml-parser";
 import { initializeApp, getApps, getApp } from "firebase-admin/app";
 import { getAuth, DecodedIdToken } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
+import bcrypt from 'bcryptjs';
+
+import { 
+  verifySessionToken, 
+  loadTestUsers, 
+  loadTestUserProfile, 
+  saveTestUserProfile, 
+  loadTestUserNewsCards, 
+  saveTestUserNewsCards,
+  generateSessionToken,
+  bootstrapTestAdmin,
+  saveTestUsers
+} from './src/utils/testAuthServer.ts';
+
 
 declare global {
   namespace Express {
@@ -110,6 +124,13 @@ async function getVerifiedUid(req: express.Request): Promise<string | null> {
   const token = authHeader.split(" ")[1];
   if (!token) return null;
 
+  if (process.env.ENABLE_TEST_AUTH === 'true') {
+    const verified = verifySessionToken(token);
+    if (verified) {
+      return verified.uuid;
+    }
+  }
+
   try {
     if (!getApps().length) return null;
     const decoded = await getAuth(getApp()).verifyIdToken(token);
@@ -133,6 +154,23 @@ async function requireAuth(req: express.Request, res: express.Response, next: ex
   if (!token) {
     res.status(401).json({ error: "Недействительный формат токена авторизации" });
     return;
+  }
+
+  if (process.env.ENABLE_TEST_AUTH === 'true') {
+    const verified = verifySessionToken(token);
+    if (verified) {
+      const testUsers = loadTestUsers();
+      const testUser = testUsers[verified.uuid];
+      if (testUser) {
+        req.user = {
+          uid: testUser.id,
+          email: testUser.email || `${testUser.username}@med.ru`,
+          admin: testUser.role === 'admin',
+        } as any;
+        next();
+        return;
+      }
+    }
   }
 
   try {
@@ -1391,7 +1429,10 @@ async function enrichArticlesWithFullText(articles: any[]) {
 
 
 
-app.post("/api/rss/fetch", rssRateLimiter, async (req, res) => {
+// ----------------------------------------------------
+// 1. Fetch & Parse RSS / JSON Feeds
+// ----------------------------------------------------
+app.post("/api/rss/fetch", requireAuth, rssRateLimiter, async (req, res) => {
   const { url, feedId, limit: requestedLimit, type, searchQuery, hashtags, keywords, excludeKeywords, keywordMode, category, title } = req.body;
   const limit = typeof requestedLimit === 'number' && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 50;
 
@@ -1604,7 +1645,7 @@ app.post("/api/rss/fetch", rssRateLimiter, async (req, res) => {
 // ----------------------------------------------------
 // 2. Discover RSS Feeds from any Website URL
 // ----------------------------------------------------
-app.post("/api/rss/discover", rssRateLimiter, async (req, res) => {
+app.post("/api/rss/discover", requireAuth, rssRateLimiter, async (req, res) => {
   const { url } = req.body;
   if (!url || typeof url !== "string") {
     res.status(400).json({ error: "URL обязателен" });
@@ -2455,6 +2496,221 @@ app.post("/api/admin/logs/clear", requireAdmin, (req, res) => {
 });
 
 // ----------------------------------------------------
+// TEST AUTH MODE ENDPOINTS & STORAGE PROXIES
+// ----------------------------------------------------
+function requireTestAuthEnabled(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (process.env.ENABLE_TEST_AUTH !== 'true') {
+    res.status(404).json({ error: "Тестовый режим авторизации отключен (ENABLE_TEST_AUTH !== true)" });
+    return;
+  }
+  next();
+}
+
+app.post("/api/test-auth/register", requireTestAuthEnabled, authSensitiveRateLimiter, async (req, res) => {
+  const { username, password, email } = req.body;
+
+  if (!username || typeof username !== 'string' || username.trim().length < 3) {
+    res.status(400).json({ error: "Имя пользователя должно содержать не менее 3 символов" });
+    return;
+  }
+  if (!password || typeof password !== 'string' || password.length < 6) {
+    res.status(400).json({ error: "Пароль должен содержать не менее 6 символов" });
+    return;
+  }
+
+  const cleanUsername = username.trim();
+  const cleanEmail = email && typeof email === 'string' ? email.trim() : `${cleanUsername.toLowerCase()}@med.ru`;
+
+  const users = loadTestUsers();
+  const exists = Object.values(users).some(
+    (u) => u.username.toLowerCase() === cleanUsername.toLowerCase()
+  );
+
+  if (exists) {
+    res.status(400).json({ error: "Пользователь с таким именем уже зарегистрирован" });
+    return;
+  }
+
+  const uuid = `test_usr_${crypto.randomUUID()}`;
+  const salt = bcrypt.genSaltSync(10);
+  const passwordHash = bcrypt.hashSync(password, salt);
+
+  users[uuid] = {
+    id: uuid,
+    username: cleanUsername,
+    email: cleanEmail,
+    passwordHash,
+    role: 'user',
+    createdAt: new Date().toISOString(),
+  };
+
+  saveTestUsers(users);
+
+  // Initialize their default profile
+  const defaultProfile = loadTestUserProfile(uuid, cleanUsername, cleanEmail);
+  saveTestUserProfile(uuid, defaultProfile);
+
+  res.json({
+    success: true,
+    user: {
+      id: uuid,
+      username: cleanUsername,
+      email: cleanEmail,
+      role: 'user',
+      createdAt: users[uuid].createdAt,
+    }
+  });
+});
+
+app.post("/api/test-auth/login", requireTestAuthEnabled, authSensitiveRateLimiter, async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    res.status(400).json({ error: "Необходимо указать имя пользователя и пароль" });
+    return;
+  }
+
+  const users = loadTestUsers();
+  const cleanUsername = String(username).trim();
+
+  const user = Object.values(users).find(
+    (u) => u.username.toLowerCase() === cleanUsername.toLowerCase()
+  );
+
+  if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
+    res.status(401).json({ error: "Неверное имя пользователя или пароль" });
+    return;
+  }
+
+  const token = generateSessionToken(user.id);
+
+  res.json({
+    success: true,
+    token,
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      createdAt: user.createdAt,
+    }
+  });
+});
+
+app.get("/api/test-auth/me", requireTestAuthEnabled, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
+  const users = loadTestUsers();
+  const user = users[uid];
+  if (!user) {
+    res.status(404).json({ error: "Пользователь не найден" });
+    return;
+  }
+  res.json({
+    success: true,
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      createdAt: user.createdAt,
+    }
+  });
+});
+
+app.post("/api/test-auth/logout", requireTestAuthEnabled, (req, res) => {
+  res.json({ success: true });
+});
+
+// Proxy route: Profile GET
+app.get("/api/test-auth/profile", requireTestAuthEnabled, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
+  const email = req.user!.email;
+  const users = loadTestUsers();
+  const user = users[uid];
+  const username = user ? user.username : 'Пользователь';
+
+  const profile = loadTestUserProfile(uid, username, email);
+  res.json({ success: true, profile });
+});
+
+// Proxy route: Profile POST
+app.post("/api/test-auth/profile", requireTestAuthEnabled, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
+  const { profile } = req.body;
+  if (!profile || typeof profile !== 'object' || profile.id !== uid) {
+    res.status(400).json({ error: "Неверный формат или несовпадение ID профиля" });
+    return;
+  }
+
+  saveTestUserProfile(uid, profile);
+  res.json({ success: true, profile });
+});
+
+// Proxy route: NewsCards GET
+app.get("/api/test-auth/news-cards", requireTestAuthEnabled, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
+  const newsCards = loadTestUserNewsCards(uid);
+  res.json({ success: true, newsCards });
+});
+
+// Proxy route: NewsCard POST (Single Save)
+app.post("/api/test-auth/news-cards", requireTestAuthEnabled, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
+  const { card } = req.body;
+  if (!card || typeof card !== 'object' || !card.id) {
+    res.status(400).json({ error: "Некорректная новостная карточка" });
+    return;
+  }
+
+  const cards = loadTestUserNewsCards(uid);
+  const existsIdx = cards.findIndex(c => c.id === card.id);
+  if (existsIdx >= 0) {
+    cards[existsIdx] = card;
+  } else {
+    cards.push(card);
+  }
+
+  saveTestUserNewsCards(uid, cards);
+  res.json({ success: true });
+});
+
+// Proxy route: NewsCards POST (Batch Save)
+app.post("/api/test-auth/news-cards/batch", requireTestAuthEnabled, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
+  const { cards: newCards } = req.body;
+  if (!newCards || !Array.isArray(newCards)) {
+    res.status(400).json({ error: "Список карточек обязателен" });
+    return;
+  }
+
+  const cards = loadTestUserNewsCards(uid);
+  for (const nc of newCards) {
+    if (!nc || !nc.id) continue;
+    const existsIdx = cards.findIndex(c => c.id === nc.id);
+    if (existsIdx >= 0) {
+      cards[existsIdx] = nc;
+    } else {
+      cards.push(nc);
+    }
+  }
+
+  saveTestUserNewsCards(uid, cards);
+  res.json({ success: true });
+});
+
+// Proxy route: NewsCards DELETE
+app.delete("/api/test-auth/news-cards/:id", requireTestAuthEnabled, requireAuth, async (req, res) => {
+  const uid = req.user!.uid;
+  const cardId = req.params.id;
+
+  const cards = loadTestUserNewsCards(uid);
+  const filtered = cards.filter(c => c.id !== cardId);
+
+  saveTestUserNewsCards(uid, filtered);
+  res.json({ success: true });
+});
+
+// ----------------------------------------------------
 // Global Safe Production Error Handler
 // (Suppresses stack traces in production to prevent leakage)
 // ----------------------------------------------------
@@ -2476,6 +2732,13 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Start Vite dev server or static files
 // ----------------------------------------------------
 async function startServer() {
+  // Bootstrap the test admin credentials if Test Auth Mode is active
+  try {
+    bootstrapTestAdmin();
+  } catch (err) {
+    console.error('[TestAuth] Admin bootstrap failed:', err);
+  }
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

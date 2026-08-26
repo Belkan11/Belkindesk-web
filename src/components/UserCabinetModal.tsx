@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import { UserProfile, AppArchetypeStyle } from '../types';
 import { DEFAULT_WORKSPACE_CONFIG, saveAISettings } from '../utils/storage';
+import { saveAiCredentialsToServer } from '../utils/aiCredentials';
+import { sanitizeProfilesForBackup } from '../utils/sanitizeBackup';
 import { DEFAULT_INITIAL_FEEDS } from '../data/curatedFeeds';
 
 const isDevMode = typeof window !== 'undefined' && (
@@ -123,9 +125,12 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
   const [showApiKey, setShowApiKey] = useState(false);
 
 
+  const [aiError, setAiError] = useState<string | null>(null);
+
   const handleExportData = () => {
+    const sanitizedProfiles = sanitizeProfilesForBackup(allProfiles);
     const data = {
-      profiles: allProfiles,
+      profiles: sanitizedProfiles,
       exportDate: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -137,12 +142,40 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const handleSaveCurrentProfile = (e?: React.FormEvent) => {
+  const handleSaveCurrentProfile = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    setAiError(null);
+    const rawKey = aiApiKey.trim();
+
+    // 1. If user entered a new API key, attempt server-side save first
+    let hasKeyFlag = !!currentUser?.hasAiApiKey;
+    if (rawKey.length > 0) {
+      try {
+        const res = await saveAiCredentialsToServer({
+          provider: aiProvider,
+          apiKey: rawKey,
+          model: aiModel.trim(),
+          url: aiUrl.trim(),
+        });
+        if (!res.success) {
+          // On error: DO NOT clear input, DO NOT show success, show error
+          setAiError(res.error || 'Ошибка при сохранении API ключа на сервере');
+          return;
+        }
+        hasKeyFlag = true;
+        // On success: clear plaintext input
+        setAiApiKey('');
+      } catch (err: any) {
+        setAiError(err.message || 'Ошибка сети при обращении к серверу');
+        return;
+      }
+    }
+
     const cats = categoriesInput.split(',').map(c => c.trim()).filter(Boolean);
-    saveAISettings(aiProvider, aiApiKey, aiModel, aiUrl, currentUser, (updatedProfile) => {
+    saveAISettings(aiProvider, rawKey, aiModel, aiUrl, currentUser, (updatedProfile) => {
       onSaveProfile({
         ...updatedProfile,
+        hasAiApiKey: hasKeyFlag,
         username: username.trim(),
         displayName: displayName.trim(),
         email: email.trim(),
@@ -882,6 +915,12 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
                     </div>
                     По умолчанию карточки формируются без ИИ (быстрый парсинг и перевод на русский). ИИ используется только при наличии вашего личного API ключа для глубокой аналитики.
                   </div>
+
+                  {aiError && (
+                    <div className="p-3 bg-rose-950/40 border border-rose-500/40 rounded-lg text-rose-300 text-xs font-mono">
+                      {aiError}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-5 flex justify-end gap-2">

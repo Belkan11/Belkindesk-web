@@ -16,11 +16,28 @@ export interface FeedFetchResult {
   itemCount: number;
 }
 
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const user = auth.currentUser;
+    if (user) {
+      const token = await user.getIdToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  return headers;
+}
+
 export async function fetchFeedArticles(feed: any, limit = 50): Promise<FeedFetchResult & { error?: string }> {
   try {
+    const headers = await getAuthHeaders();
     const res = await fetch('/api/rss/fetch', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ 
         url: feed.url, 
         feedId: feed.feedId || feed.id, 
@@ -82,12 +99,16 @@ export async function fetchFeedArticles(feed: any, limit = 50): Promise<FeedFetc
 
 
 export async function discoverFeedsFromUrl(url: string) {
+  const headers = await getAuthHeaders();
   const res = await fetch('/api/rss/discover', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ url }),
   });
-  if (!res.ok) throw new Error('Не удалось просканировать сайт');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Не удалось просканировать сайт');
+  }
   return res.json();
 }
 

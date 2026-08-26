@@ -1,10 +1,11 @@
 import { UserProfile, MedicalNote, MedicalTimerItem, AccessibilityConfig } from '../types';
+import { sanitizeProfilesForBackup } from './sanitizeBackup';
 
 export interface BelkinDeskBackupPackage {
   version: '2.0-cloud';
   exportedAt: string;
   appName: string;
-  profiles: UserProfile[];
+  profiles: Partial<UserProfile>[];
   currentUserId: string;
   notes?: MedicalNote[];
   timers?: MedicalTimerItem[];
@@ -23,11 +24,12 @@ export function exportDatabaseToJson(
   timers: MedicalTimerItem[],
   accessibility: AccessibilityConfig
 ): void {
+  const sanitizedProfiles = sanitizeProfilesForBackup(profiles);
   const pkg: BelkinDeskBackupPackage = {
     version: '2.0-cloud',
     exportedAt: new Date().toISOString(),
     appName: 'BelkinDESK MED ♥',
-    profiles,
+    profiles: sanitizedProfiles,
     currentUserId,
     notes,
     timers,

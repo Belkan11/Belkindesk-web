@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './utils/firebase';
-import { HeartPulse } from 'lucide-react';
+import { HeartPulse, AlertOctagon } from 'lucide-react';
 import { 
   UserProfile, 
   MedicalNote, 
@@ -46,11 +46,15 @@ import {
   deleteUserProfileFromFirestore, 
   subscribeToAllProfiles,
   subscribeToUserProfile,
-  loadUserDataFromFirestore
+  loadUserDataFromFirestore,
+  isFirebaseConfigBlocked,
+  actualProjectId,
+  EXPECTED_PRODUCTION_PROJECT_ID
 } from './utils/firebase';
 
 import { MEDICAL_FEEDS, INITIAL_MEDICAL_ARTICLES, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS } from './data/curatedFeeds';
 import { fetchFeedArticles, aiProcessArticles } from './utils/feedApi';
+import { sanitizeAndMigrateImportedProfile } from './utils/sanitizeBackup';
 import { getCityTimeInfo } from './utils/timeZone';
 import { 
   migrateLocalArticlesToFirestoreNewsCards, 
@@ -95,6 +99,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (localStorage.getItem('belkindesk_use_test_auth') === 'true') {
+      const activeId = localStorage.getItem('belkindesk_test_auth_uid');
+      if (activeId) {
+        setFirebaseUser({
+          uid: activeId,
+          email: localStorage.getItem('belkindesk_test_auth_email') || `${activeId}@pulsedesk.local`,
+          displayName: localStorage.getItem('belkindesk_test_auth_username') || 'Пользователь',
+        });
+        setActiveSessionId(activeId);
+        saveActiveSessionUserId(activeId);
+      } else {
+        setFirebaseUser(null);
+        setActiveSessionId(null);
+        saveActiveSessionUserId(null);
+      }
+      setAuthLoading(false);
+      return;
+    }
+
     return onAuthStateChanged(auth, (user) => {
       setFirebaseUser(user);
       if (user) {
@@ -152,13 +175,17 @@ export default function App() {
       const email = firebaseUser.email || `${effectiveActiveId}@pulsedesk.local`;
       const displayName = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Пользователь';
       const isDevAdmin = isDevMode && effectiveActiveId === 'user-admin-belkin';
+      const isTestAdmin = localStorage.getItem('belkindesk_use_test_auth') === 'true' && (
+        effectiveActiveId === 'user-admin-belkin' || 
+        displayName.toLowerCase() === 'belkin'
+      );
       return {
         id: effectiveActiveId,
         username: displayName,
         login: displayName,
         email: email,
         displayName: displayName,
-        role: isDevAdmin ? 'admin' : 'user',
+        role: (isDevAdmin || isTestAdmin) ? 'admin' : 'user',
         createdAt: new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -281,7 +308,7 @@ export default function App() {
       return;
     }
 
-    const effectiveId = firebaseUser ? firebaseUser.uid : (isDevMode ? activeSessionId : null);
+    const effectiveId = firebaseUser ? firebaseUser.uid : ((isDevMode || localStorage.getItem('belkindesk_use_test_auth') === 'true') ? activeSessionId : null);
     if (!effectiveId) {
       setIsProfileLoading(false);
       setProfileLoadStatus('idle');
@@ -860,6 +887,13 @@ export default function App() {
     setFirebaseUser(null);
     setActiveSessionId(null);
     clearActiveSessionUserId();
+
+    // Clear Test Auth credentials if any
+    localStorage.removeItem('belkindesk_use_test_auth');
+    localStorage.removeItem('belkindesk_test_auth_token');
+    localStorage.removeItem('belkindesk_test_auth_uid');
+    localStorage.removeItem('belkindesk_test_auth_username');
+    localStorage.removeItem('belkindesk_test_auth_email');
 
     // Immediately clear all user-isolated states to prevent ANY flash or leaking of User A's data
     setNotes([]);
@@ -1539,7 +1573,7 @@ export default function App() {
     saveStoredProfiles(nextProfiles);
   };
 
-  const handleRestoreBackup = (
+  const handleRestoreBackup = async (
     importedProfiles: UserProfile[],
     extraNotes?: MedicalNote[],
     extraTimers?: MedicalTimerItem[],
@@ -1562,7 +1596,10 @@ export default function App() {
     const actualTargetId = currentBase.id;
 
     // Match imported profile by targetId if present, else use first imported profile as settings source
-    const sourceProfile = importedProfiles.find((p) => p.id === actualTargetId) || importedProfiles[0];
+    const rawSourceProfile = importedProfiles.find((p) => p.id === actualTargetId) || importedProfiles[0];
+    
+    // Safely migrate legacy AI key to server-side userSecrets and strip plaintext credentials
+    const { sanitizedProfile: sourceProfile } = await sanitizeAndMigrateImportedProfile(rawSourceProfile, actualTargetId);
 
     // Data values restored with ?? to respect valid empty strings, empty arrays, false, 0
     const restoredNotes = extraNotes ?? sourceProfile?.notes ?? currentBase.notes ?? [];
@@ -1577,12 +1614,12 @@ export default function App() {
     const restoredHours = Array.isArray(sourceProfile?.scheduledHours) ? sourceProfile.scheduledHours : (currentBase.scheduledHours ?? [6, 12, 19]);
     const restoredConfig = sourceProfile?.workspaceConfig ? { ...DEFAULT_WORKSPACE_CONFIG, ...sourceProfile.workspaceConfig } : (currentBase.workspaceConfig ?? { ...DEFAULT_WORKSPACE_CONFIG });
     const restoredProvider = sourceProfile?.aiProvider ?? currentBase.aiProvider ?? 'gemini';
-    const restoredApiKey = sourceProfile?.aiApiKey ?? currentBase.aiApiKey ?? '';
     const restoredModel = sourceProfile?.aiModel ?? currentBase.aiModel ?? '';
     const restoredUrl = sourceProfile?.aiUrl ?? currentBase.aiUrl ?? '';
+    const restoredHasAiApiKey = sourceProfile?.hasAiApiKey ?? currentBase.hasAiApiKey;
     const restoredEnableAutoAi = sourceProfile?.enableAutoAiProcessing ?? currentBase.enableAutoAiProcessing;
 
-    // Construct restored profile PRESERVING current user Firebase identity
+    // Construct restored profile PRESERVING current user Firebase identity without secrets
     const restoredUser: UserProfile = {
       ...currentBase,
       id: actualTargetId, // Firebase identity preserved!
@@ -1602,12 +1639,13 @@ export default function App() {
       scheduledHours: restoredHours,
       workspaceConfig: restoredConfig,
       aiProvider: restoredProvider,
-      aiApiKey: restoredApiKey,
+      hasAiApiKey: restoredHasAiApiKey,
       aiModel: restoredModel,
       aiUrl: restoredUrl,
       enableAutoAiProcessing: restoredEnableAutoAi,
       updatedAt: new Date().toISOString(),
     };
+    delete restoredUser.aiApiKey;
 
     // Update state directly without changing activeSessionId or Firebase identity
     setNotes(restoredNotes);
@@ -1627,7 +1665,7 @@ export default function App() {
     saveStoredBookmarks(restoredBookmarks, actualTargetId);
     saveStoredWorkSchedules(restoredSchedules, actualTargetId);
     saveStoredAccessibility(restoredAccessibility, actualTargetId);
-    saveAISettings(restoredProvider, restoredApiKey, restoredModel, restoredUrl, restoredUser);
+    saveAISettings(restoredProvider, '', restoredModel, restoredUrl, restoredUser);
 
     const nextProfiles = profiles.map((p) => (p.id === actualTargetId ? restoredUser : p));
     if (!nextProfiles.some((p) => p.id === actualTargetId)) {
@@ -1649,7 +1687,7 @@ export default function App() {
         scheduledHours: restoredHours,
         workspaceConfig: restoredConfig,
         aiProvider: restoredProvider,
-        aiApiKey: restoredApiKey,
+        hasAiApiKey: restoredHasAiApiKey,
         aiModel: restoredModel,
         aiUrl: restoredUrl,
         enableAutoAiProcessing: restoredEnableAutoAi,
@@ -1664,6 +1702,57 @@ export default function App() {
   };
 
   const effectiveActiveId = firebaseUser ? firebaseUser.uid : activeSessionId;
+
+  // Block production run if Firebase projectId doesn't match
+  if (isFirebaseConfigBlocked) {
+    return (
+      <div className="min-h-screen bg-[#090b0e] text-slate-100 flex flex-col items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f242e15_1px,transparent_1px),linear-gradient(to_bottom,#1f242e15_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none opacity-40"></div>
+        <div className="max-w-xl w-full bg-slate-900/80 border border-rose-500/30 rounded-xl p-8 space-y-6 shadow-2xl relative z-10">
+          <div className="flex items-center gap-4 text-rose-500">
+            <AlertOctagon className="w-12 h-12 shrink-0 animate-pulse" />
+            <div>
+              <h2 className="text-xl font-bold tracking-tight font-mono uppercase">
+                Ошибка конфигурации Firebase
+              </h2>
+              <p className="text-xs text-rose-400 font-mono tracking-widest uppercase">
+                РЕЖИМ PRODUCTION ЗАБЛОКИРОВАН
+              </p>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-800/80 my-4"></div>
+
+          <div className="space-y-4 text-sm text-slate-300 leading-relaxed">
+            <p>
+              Приложение обнаружило несоответствие идентификатора проекта (Project ID) в конфигурации Firebase. 
+              В целях безопасности все операции записи и чтения в базу данных Firestore заблокированы во избежание повреждения данных.
+            </p>
+
+            <div className="bg-slate-950/60 border border-slate-800/80 rounded-lg p-4 space-y-2 font-mono text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Ожидаемый Project ID:</span>
+                <span className="text-emerald-400 font-bold">{EXPECTED_PRODUCTION_PROJECT_ID}</span>
+              </div>
+              <div className="flex justify-between border-t border-slate-900/60 pt-2 mt-2">
+                <span className="text-slate-500">Фактический Project ID:</span>
+                <span className="text-rose-400 font-bold">{actualProjectId || 'ОТСУТСТВУЕТ'}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-xs text-slate-400 bg-rose-950/20 border border-rose-900/30 rounded-lg p-3">
+              <p className="font-semibold text-rose-300">Что необходимо сделать:</p>
+              <ul className="list-disc pl-4 space-y-1">
+                <li>Убедитесь, что в файле <code className="text-slate-200 bg-slate-950/50 px-1 rounded">firebase-applet-config.json</code> в корневой директории проекта указаны правильные ключи от production-проекта.</li>
+                <li>Не запускайте команду <code className="text-slate-200 bg-slate-950/50 px-1 rounded">set_up_firebase</code> или другие сторонние инициализаторы, которые могут перезаписать локальный конфигурационный файл.</li>
+                <li>Запустите локальную валидацию проекта с помощью команды <code className="text-slate-200 bg-slate-950/50 px-1 rounded">npm run firebase:check</code> перед выкаткой релиза.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Show loading screen while Firebase Auth is resolving OR while profile is being fetched from Firestore or local fallback
   if (authLoading || (effectiveActiveId && isProfileLoading)) {

@@ -8,7 +8,7 @@ import {
   onSnapshot, 
   writeBatch
 } from 'firebase/firestore';
-import { db, auth, logFirestoreError } from './firebase';
+import { db, auth, logFirestoreError, testAuthApiCall } from './firebase';
 import { Article, NewsCard, FeedConfig } from '../types';
 import { getStoredArticles, getSeenArticlesList } from './storage';
 import { isRetryableError, addPendingOperation } from './pendingSync';
@@ -86,6 +86,16 @@ export function mapToNewsCard(input: NewsCard | Article): NewsCard {
  * Path: /users/{firebaseUser.uid}/newsCards/{cardId}
  */
 export async function saveNewsCardToFirestore(item: NewsCard | Article): Promise<void> {
+  if (typeof window !== 'undefined' && localStorage.getItem('belkindesk_use_test_auth') === 'true') {
+    try {
+      const card = mapToNewsCard(item);
+      await testAuthApiCall('POST', '/api/test-auth/news-cards', { card });
+      return;
+    } catch (err) {
+      console.error('[TestAuth Client] Failed to save news card:', err);
+      throw err;
+    }
+  }
   const uid = auth.currentUser?.uid;
   if (!uid) {
     console.warn('[NewsCards Firestore] Operation blocked: No authenticated Firebase user.');
@@ -143,6 +153,16 @@ export async function saveNewsCardToFirestore(item: NewsCard | Article): Promise
  * Path: /users/{firebaseUser.uid}/newsCards/{cardId}
  */
 export async function saveNewsCardsBatchToFirestore(items: (NewsCard | Article)[]): Promise<void> {
+  if (typeof window !== 'undefined' && localStorage.getItem('belkindesk_use_test_auth') === 'true') {
+    try {
+      const mapped = items.map(mapToNewsCard);
+      await testAuthApiCall('POST', '/api/test-auth/news-cards/batch', { cards: mapped });
+      return;
+    } catch (err) {
+      console.error('[TestAuth Client] Failed to batch save news cards:', err);
+      throw err;
+    }
+  }
   const uid = auth.currentUser?.uid;
   if (!uid || !Array.isArray(items) || items.length === 0) return;
 
@@ -185,6 +205,15 @@ export async function saveNewsCardsBatchToFirestore(items: (NewsCard | Article)[
  * Path: /users/{firebaseUser.uid}/newsCards
  */
 export async function loadNewsCardsFromFirestore(): Promise<NewsCard[]> {
+  if (typeof window !== 'undefined' && localStorage.getItem('belkindesk_use_test_auth') === 'true') {
+    try {
+      const res = await testAuthApiCall('GET', '/api/test-auth/news-cards');
+      return res.newsCards || [];
+    } catch (err) {
+      console.error('[TestAuth Client] Failed to load news cards:', err);
+      return [];
+    }
+  }
   const uid = auth.currentUser?.uid;
   if (!uid) return [];
 
@@ -215,6 +244,15 @@ export async function loadNewsCardsFromFirestore(): Promise<NewsCard[]> {
  * Path: /users/{firebaseUser.uid}/newsCards/{cardId}
  */
 export async function deleteNewsCardFromFirestore(cardId: string, itemPayload?: Article | NewsCard): Promise<void> {
+  if (typeof window !== 'undefined' && localStorage.getItem('belkindesk_use_test_auth') === 'true') {
+    try {
+      await testAuthApiCall('DELETE', `/api/test-auth/news-cards/${cardId}`);
+      return;
+    } catch (err) {
+      console.error('[TestAuth Client] Failed to delete news card:', err);
+      throw err;
+    }
+  }
   const uid = auth.currentUser?.uid;
   if (!uid || !cardId) return;
 
@@ -263,6 +301,25 @@ export function subscribeToNewsCardsFromFirestore(
   onUpdate: (cards: NewsCard[]) => void,
   explicitUid?: string
 ): () => void {
+  if (typeof window !== 'undefined' && localStorage.getItem('belkindesk_use_test_auth') === 'true') {
+    let isCancelled = false;
+    const poll = async () => {
+      try {
+        const res = await testAuthApiCall('GET', '/api/test-auth/news-cards');
+        if (!isCancelled && res.newsCards) {
+          onUpdate(res.newsCards);
+        }
+      } catch (err) {
+        console.warn('[TestAuth Client] News cards subscription poll error:', err);
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 5000);
+    return () => {
+      isCancelled = true;
+      clearInterval(timer);
+    };
+  }
   const uid = explicitUid || auth.currentUser?.uid;
   if (!uid) return () => {};
 
