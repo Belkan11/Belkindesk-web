@@ -56,7 +56,7 @@ export const DesktopDashboardView: React.FC<DesktopDashboardViewProps> = ({
   };
 
   const todayEvents = (currentUser.calendarEvents || []).filter((ev) => ev.date === todayStr);
-  const unreadArticles = articles.filter((a) => !a.isRead).slice(0, 6);
+  const unreadArticles = articles.filter((a) => !a.isRead && !a.isHidden).slice(0, 6);
   const pinnedBookmarks = (currentUser.bookmarks || []).filter((b) => b.isPinned);
 
   const getShiftBadge = (type: string) => {

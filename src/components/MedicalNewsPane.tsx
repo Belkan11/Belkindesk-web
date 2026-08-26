@@ -56,6 +56,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
   // Filter articles based on feed, search, and starred filter (no hard limits in search area)
   const filteredArticles = React.useMemo(() => {
     const rawMatches = articles.filter((art) => {
+      if (art.isHidden) return false;
       if (isStarredFilter && !art.isStarred) return false;
       if (activeFeedId && art.feedId !== activeFeedId) return false;
       if (searchQuery.trim()) {
@@ -98,7 +99,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
     return result;
   }, [articles, isStarredFilter, activeFeedId, searchQuery]);
 
-  const starredCount = articles.filter((a) => a.isStarred).length;
+  const starredCount = articles.filter((a) => a.isStarred && !a.isHidden).length;
 
   return (
     <div className={`flex-1 flex flex-col overflow-hidden p-2.5 font-mono text-xs select-none transition-all duration-300 ${
@@ -191,7 +192,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
 
             {feeds.map((feed) => {
               const isSelected = activeFeedId === feed.id && !isStarredFilter;
-              const count = articles.filter((a) => a.feedId === feed.id).length;
+              const count = articles.filter((a) => a.feedId === feed.id && !a.isHidden).length;
 
               return (
                 <button

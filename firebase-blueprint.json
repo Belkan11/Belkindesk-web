@@ -10,12 +10,37 @@
         "displayName": { "type": "string" }
       },
       "required": ["id", "email", "displayName"]
+    },
+    "newsCards": {
+      "title": "NewsCard",
+      "description": "Personal cloud news card document for a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "sourceId": { "type": "string" },
+        "sourceName": { "type": "string" },
+        "publishedAt": { "type": "string" },
+        "fetchedAt": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "isStarred": { "type": "boolean" },
+        "isHidden": { "type": "boolean" },
+        "savedLater": { "type": "boolean" },
+        "userNote": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "url", "sourceId", "sourceName", "publishedAt", "fetchedAt", "updatedAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "users" },
       "description": "User profile collection"
+    },
+    "/users/{userId}/newsCards/{cardId}": {
+      "schema": { "$ref": "newsCards" },
+      "description": "User personal cloud news cards collection"
     }
   }
 }

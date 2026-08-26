@@ -1,5 +1,12 @@
 import { Article, FeedConfig, AIDiscoveredFeed, AIDigestResult } from '../types';
 import { getActiveSessionUserId, getStoredProfiles } from './storage';
+import { auth } from './firebase';
+
+const isDevMode = typeof window !== 'undefined' && (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.includes('dev')
+);
 
 export interface FeedFetchResult {
   title: string;
@@ -74,14 +81,16 @@ export async function discoverFeedsFromUrl(url: string) {
   return res.json();
 }
 
-function getAiHeaders(): Record<string, string> {
+function getAiHeaders(explicitUserId?: string): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   try {
-    const activeUserId = getActiveSessionUserId();
-    const providerKey = activeUserId ? `belkin_user_ai_provider_${activeUserId}` : 'belkin_user_ai_provider';
-    const keyKey = activeUserId ? `belkin_user_ai_key_${activeUserId}` : 'belkin_user_ai_key';
-    const modelKey = activeUserId ? `belkin_user_ai_model_${activeUserId}` : 'belkin_user_ai_model';
-    const urlKey = activeUserId ? `belkin_user_ai_url_${activeUserId}` : 'belkin_user_ai_url';
+    const activeUserId = explicitUserId || auth.currentUser?.uid || (isDevMode ? getActiveSessionUserId() : null);
+    if (!activeUserId) return headers;
+
+    const providerKey = `belkin_user_ai_provider_${activeUserId}`;
+    const keyKey = `belkin_user_ai_key_${activeUserId}`;
+    const modelKey = `belkin_user_ai_model_${activeUserId}`;
+    const urlKey = `belkin_user_ai_url_${activeUserId}`;
 
     let key = localStorage.getItem(keyKey);
     let provider = localStorage.getItem(providerKey);
@@ -89,14 +98,14 @@ function getAiHeaders(): Record<string, string> {
     let url = localStorage.getItem(urlKey);
 
     // Fallback to profile restored from Firestore if localStorage cache key is missing
-    if (activeUserId && (!key || !provider)) {
+    if (!key || !provider) {
       const profiles = getStoredProfiles();
       const activeUser = profiles.find((p) => p.id === activeUserId);
       if (activeUser) {
-        if (!key && activeUser.aiApiKey) key = activeUser.aiApiKey;
+        if (!key && activeUser.aiApiKey !== undefined) key = activeUser.aiApiKey;
         if (!provider && activeUser.aiProvider) provider = activeUser.aiProvider;
-        if (!model && activeUser.aiModel) model = activeUser.aiModel;
-        if (!url && activeUser.aiUrl) url = activeUser.aiUrl;
+        if (!model && activeUser.aiModel !== undefined) model = activeUser.aiModel;
+        if (!url && activeUser.aiUrl !== undefined) url = activeUser.aiUrl;
       }
     }
 

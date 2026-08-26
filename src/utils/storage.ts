@@ -772,8 +772,21 @@ const STORAGE_ARTICLES_KEY = 'belkindesk_med_articles_v3';
 
 export function getStoredArticles(userId?: string): Article[] {
   try {
-    const key = userId ? `${STORAGE_ARTICLES_KEY}_${userId}` : STORAGE_ARTICLES_KEY;
-    const raw = localStorage.getItem(key);
+    if (userId) {
+      const key = `${STORAGE_ARTICLES_KEY}_${userId}`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+      // Logged-in user cache missing: return empty array, NEVER fall back to global guest cache or defaults
+      return [];
+    }
+
+    // Unauthenticated / Guest / Dev mode
+    const raw = localStorage.getItem(STORAGE_ARTICLES_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -788,9 +801,14 @@ export function getStoredArticles(userId?: string): Article[] {
 
 export function saveStoredArticles(articles: Article[], userId?: string) {
   try {
-    const key = userId ? `${STORAGE_ARTICLES_KEY}_${userId}` : STORAGE_ARTICLES_KEY;
     if (!Array.isArray(articles)) return;
-    localStorage.setItem(key, JSON.stringify(articles));
+    if (userId) {
+      const key = `${STORAGE_ARTICLES_KEY}_${userId}`;
+      localStorage.setItem(key, JSON.stringify(articles));
+    } else {
+      // Only save to global key in guest / unauthenticated mode
+      localStorage.setItem(STORAGE_ARTICLES_KEY, JSON.stringify(articles));
+    }
   } catch (err) {
     console.warn('Failed to save articles to local storage:', err);
   }
@@ -798,6 +816,10 @@ export function saveStoredArticles(articles: Article[], userId?: string) {
 
 const STORAGE_SEEN_ARTICLES_KEY = 'belkindesk_seen_articles';
 
+/**
+ * Legacy read-only accessor for one-time migration.
+ * Deprecated: Source of truth for read state is Firestore /users/{uid}/newsCards/{cardId}.isRead
+ */
 export function getSeenArticlesList(): string[] {
   try {
     const raw = localStorage.getItem(STORAGE_SEEN_ARTICLES_KEY);
@@ -807,12 +829,12 @@ export function getSeenArticlesList(): string[] {
   }
 }
 
-export function markArticlesAsSeen(idsOrTitles: string[]) {
-  try {
-    const current = getSeenArticlesList();
-    const updated = Array.from(new Set([...current, ...idsOrTitles])).slice(-500); // keep last 500
-    localStorage.setItem(STORAGE_SEEN_ARTICLES_KEY, JSON.stringify(updated));
-  } catch {}
+/**
+ * Deprecated: Active writes to belkindesk_seen_articles are disabled.
+ * Read state is managed exclusively in Firestore /users/{uid}/newsCards.
+ */
+export function markArticlesAsSeen(_idsOrTitles: string[]) {
+  // No-op to prevent cross-user pollution of legacy global seen key
 }
 
 

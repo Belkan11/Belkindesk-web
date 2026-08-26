@@ -57,11 +57,17 @@ export interface Article {
   title: string;
   titleRu?: string;
   link: string;
+  url?: string;
+  sourceId?: string;
+  sourceName?: string;
   pubDate: string;
   isoDate?: string;
+  publishedAt?: string;
   author?: string;
   content: string;
+  description?: string;
   contentSnippet: string;
+  summary?: string;
   summaryOneLine?: string;
   summaryThreeLines?: string;
   detailedContent?: string;
@@ -71,10 +77,14 @@ export interface Article {
   extractionStatus?: 'full' | 'partial' | 'failed';
   extractionError?: string;
   categories?: string[];
+  category?: string;
   matchedKeywords?: string[];
   isRead?: boolean;
   isStarred?: boolean;
+  isHidden?: boolean;
   isSavedLater?: boolean;
+  savedLater?: boolean;
+  userNote?: string;
   ai?: {
     titleRu?: string;
     summaryOneLine?: string;
@@ -94,6 +104,57 @@ export interface Article {
   solution?: string;
   contentStatus?: 'full' | 'partial' | 'title_only' | 'error';
   fetchedAt?: string;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  updatedAt?: string;
+}
+
+export interface NewsCard {
+  id: string;
+  title: string;
+  url: string;
+  sourceId: string;
+  sourceName: string;
+  publishedAt: string;
+  fetchedAt: string;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  summary?: string;
+  description?: string;
+  imageUrl?: string;
+  category?: string;
+  isRead?: boolean;
+  isStarred?: boolean;
+  isHidden?: boolean;
+  savedLater?: boolean;
+  userNote?: string;
+  updatedAt: string;
+
+  // Optional compatibility fields with Article
+  imageUrls?: string[];
+  ai?: Article['ai'];
+  feedId?: string;
+  feedTitle?: string;
+  feedCategory?: string;
+  feedIcon?: string;
+  link?: string;
+  pubDate?: string;
+  isoDate?: string;
+  content?: string;
+  contentSnippet?: string;
+  author?: string;
+  summaryOneLine?: string;
+  summaryThreeLines?: string;
+  detailedContent?: string;
+  keyTerms?: string[];
+  extractionStatus?: 'full' | 'partial' | 'failed';
+  categories?: string[];
+  isSavedLater?: boolean;
+  aiSummary?: string;
+  aiKeyTakeaways?: string[];
+  aiSentiment?: 'positive' | 'neutral' | 'negative' | 'analytical';
+  medicalDigest?: MedicalDigestData;
+  contentStatus?: 'full' | 'partial' | 'title_only' | 'error';
 }
 
 export type SourceType = 'rss' | 'atom' | 'website' | 'youtube' | 'reddit' | 'telegram' | 'search' | 'custom' | 'pikabu' | '4pda' | 'ifixit';

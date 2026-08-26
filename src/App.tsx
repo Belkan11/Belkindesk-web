@@ -8,6 +8,7 @@ import {
   MedicalTimerItem, 
   AccessibilityConfig, 
   Article, 
+  NewsCard,
   FeedConfig, 
   WorkDaySchedule,
   AppArchetypeStyle,
@@ -32,12 +33,12 @@ import {
   saveStoredWorkSchedules,
   INITIAL_BOOKMARKS,
   INITIAL_MEDICAL_TIMERS,
+  DEFAULT_WORKSPACE_CONFIG,
+  saveAISettings,
   syncUserProfileToServer,
   syncAllProfilesWithFirestore,
   getStoredArticles,
   saveStoredArticles,
-  getSeenArticlesList,
-  markArticlesAsSeen,
   getTimestampMs
 } from './utils/storage';
 import { 
@@ -52,6 +53,15 @@ import {
 import { MEDICAL_FEEDS, INITIAL_MEDICAL_ARTICLES, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS } from './data/curatedFeeds';
 import { fetchFeedArticles, aiProcessArticles } from './utils/feedApi';
 import { getCityTimeInfo } from './utils/timeZone';
+import { 
+  migrateLocalArticlesToFirestoreNewsCards, 
+  saveNewsCardToFirestore, 
+  saveNewsCardsBatchToFirestore,
+  loadNewsCardsFromFirestore, 
+  subscribeToNewsCardsFromFirestore,
+  mergeCloudAndRssArticles,
+  getStableCardId 
+} from './utils/newsCardsCloud';
 
 import { AuthGateScreen } from './components/AuthGateScreen';
 import { BelkinHeader } from './components/BelkinHeader';
@@ -300,6 +310,36 @@ export default function App() {
     };
   }, [authLoading, firebaseUser, activeSessionId, isDevMode]);
 
+  // One-time safe background migration & Realtime sync of newsCards from Firestore
+  useEffect(() => {
+    const uid = firebaseUser?.uid;
+    if (!uid) {
+      setArticles([]);
+      return;
+    }
+
+    // 1. Safe background migration check
+    migrateLocalArticlesToFirestoreNewsCards(uid).catch((err) => {
+      console.warn('[NewsCards Migration] Migration note:', err);
+    });
+
+    // 2. Realtime subscription to current user's newsCards collection
+    const unsubscribe = subscribeToNewsCardsFromFirestore((cloudCards) => {
+      if (!cloudCards) return;
+      setArticles((prev) => {
+        const { mergedArticles } = mergeCloudAndRssArticles(cloudCards, prev);
+        saveStoredArticles(mergedArticles, uid);
+        return mergedArticles;
+      });
+    }, uid);
+
+    // 3. Guaranteed cleanup when user logs out or switches
+    return () => {
+      unsubscribe();
+      setArticles([]);
+    };
+  }, [firebaseUser?.uid]);
+
   // Dev/Admin mode only: Realtime subscribe to all profiles when Admin Panel is open
   useEffect(() => {
     if (!isAdminPanelOpen || !isDevMode) return;
@@ -409,8 +449,6 @@ export default function App() {
   useEffect(() => {
     if (currentUser?.id) {
       saveStoredArticles(articles, currentUser.id);
-    } else {
-      saveStoredArticles(articles);
     }
   }, [articles, currentUser?.id]);
 
@@ -463,144 +501,68 @@ export default function App() {
         }
       }
 
-      setRefreshStatusMessage('Скрейпинг всех источников завершен. Фильтрация дубликатов...');
-      // Deduplication across all fetched articles based on canonical URL, title, or content hash
-      const uniqueNewArticles: Article[] = [];
-      const seenLinks = new Set<string>();
-      const seenTitles = new Set<string>();
-      const seenContents = new Set<string>();
-
-      function normalizeUrl(u: string) {
-        if (!u) return '';
-        try {
-          const parsed = new URL(u);
-          let host = parsed.hostname.replace(/^www\./, '');
-          let path = parsed.pathname.replace(/\/$/, '');
-          if (host.includes('youtube.com') && parsed.searchParams.has('v')) {
-            path += '?v=' + parsed.searchParams.get('v');
-          }
-          return host + path;
-        } catch {
-          return u.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
-        }
-      }
-
-      function normalizeTitle(t: string) {
-        if (!t) return '';
-        try {
-          return t.normalize('NFKC').toLowerCase().replace(/[^a-z0-9а-яё]/gi, '');
-        } catch {
-          return t.toLowerCase().replace(/[^a-z0-9а-яё]/gi, '');
-        }
-      }
-
-      function generateContentHash(c: string) {
-        if (!c || c.length < 50) return ''; // Ignore very short content for hashing
-        // Strip HTML, normalize spaces, lowercase, take first 400 characters for the hash
-        const stripped = c.replace(/<[^>]*>?/gm, '').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
-        try {
-          return stripped.normalize('NFKC').toLowerCase().replace(/[^a-z0-9а-яё]/gi, '').slice(0, 400);
-        } catch {
-          return stripped.toLowerCase().replace(/[^a-z0-9а-яё]/gi, '').slice(0, 400);
-        }
-      }
-
-      // Read state
-      const currentKeys = new Set<string>();
-      const currentContents = new Set<string>();
-      articles.forEach((a) => {
-        if (a.title) currentKeys.add(normalizeTitle(a.title));
-        if (a.link) currentKeys.add(normalizeUrl(a.link));
-        const cHash = generateContentHash(a.content || a.contentSnippet || '');
-        if (cHash) currentContents.add(cHash);
-      });
-
-      rawArticles.forEach((art, idx) => {
-        const l = normalizeUrl(art.link || '');
-        const t = normalizeTitle(art.title || '');
-        const cHash = generateContentHash(art.content || art.contentSnippet || '');
-        
-        if (
-          (t && currentKeys.has(t)) || 
-          (l && currentKeys.has(l)) || 
-          (cHash && currentContents.has(cHash)) ||
-          (l && seenLinks.has(l)) || 
-          (t && seenTitles.has(t)) ||
-          (cHash && seenContents.has(cHash))
-        ) {
-          return;
-        }
-        
-        if (l) seenLinks.add(l);
-        if (t) seenTitles.add(t);
-        if (cHash) seenContents.add(cHash);
-        
-        uniqueNewArticles.push({
-          ...art,
-          id: `art_ref_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`
-        });
-      });
-
-      if (uniqueNewArticles.length > 0) {
-        setRefreshStatusMessage(`Найдено ${uniqueNewArticles.length} материалов. Обновление ленты...`);
-        let updatedArticlesList: Article[] = [];
-        setArticles((prev) => {
-          updatedArticlesList = [...uniqueNewArticles, ...prev].slice(0, 150);
-          return updatedArticlesList;
-        });
-        playUiSound('success');
-
-        // Fallback local layout filling without AI
-        setArticles((current) => {
-          return current.map(c => {
-            const needsLocalFill = !c.titleRu || !c.summaryOneLine || !c.summaryThreeLines;
-            if (needsLocalFill) {
-              const cleanSnippet = (c.contentSnippet || c.content || '').replace(/<[^>]*>/g, '').trim();
-              return {
-                ...c,
-                titleRu: c.titleRu || c.title,
-                summaryOneLine: c.summaryOneLine || (cleanSnippet ? (cleanSnippet.slice(0, 105) + '...') : c.title),
-                summaryThreeLines: c.summaryThreeLines || (cleanSnippet ? (cleanSnippet.slice(0, 280) + '...') : c.content || ''),
-                keyTerms: c.keyTerms || ['Инфо', c.feedCategory || 'Общие'],
-              };
-            }
-            return c;
-          });
-        });
-        setRefreshStatusMessage('Ленты успешно синхронизированы!');
-
-        // Trigger AI formatting & Russian translation for new articles ONLY if auto-processing is enabled
-        const unformatted = uniqueNewArticles.filter(a => a.feedId !== 'search-results' && (!(a.ai?.summaryOneLine || a.summaryOneLine) || !(a.ai?.summaryThreeLines || a.summaryThreeLines))).slice(0, 15);
-        if (enableAutoAiProcessing && unformatted.length > 0) {
-          setRefreshStatusMessage(`ИИ-транслятор: Адаптация и перевод ${unformatted.length} новых карточек...`);
-          const processed = await aiProcessArticles(unformatted, customAiPrompt);
-          if (processed && processed.length > 0) {
-            setArticles((current) => {
-              const pMap = new Map<string, Article>();
-              processed.forEach(p => pMap.set(p.id, p));
-              return current.map(c => {
-                const p = pMap.get(c.id);
-                if (p) {
-                  return {
-                    ...c,
-                    titleRu: p.ai?.titleRu || c.ai?.titleRu || c.titleRu || c.title,
-                    summaryOneLine: p.ai?.summaryOneLine || c.ai?.summaryOneLine || c.summaryOneLine,
-                    summaryThreeLines: p.ai?.summaryThreeLines || c.ai?.summaryThreeLines || c.summaryThreeLines,
-                    detailedContent: p.ai?.detailedContent || c.ai?.detailedContent || c.detailedContent,
-                    keyTerms: p.ai?.keyTerms || c.ai?.keyTerms || c.keyTerms,
-                  };
-                }
-                return c;
-              });
-            });
-            setRefreshStatusMessage('Формирование карточек успешно завершено!');
-            playUiSound('success');
-          }
-        }
-      } else {
-        setRefreshStatusMessage('Обновление завершено.');
-      }
+      setRefreshStatusMessage('Скрейпинг завершен. Синхронизация с облачной историей Firestore...');
       
+      const cloudCards = firebaseUser?.uid ? await loadNewsCardsFromFirestore() : [];
+      const { mergedArticles, cardsToSaveToCloud } = mergeCloudAndRssArticles(cloudCards, rawArticles);
+
+      // Save new RSS cards to Firestore for current user
+      if (firebaseUser?.uid && cardsToSaveToCloud.length > 0) {
+        saveNewsCardsBatchToFirestore(cardsToSaveToCloud).catch((err) => {
+          console.warn('[Firestore NewsCards] Batch save note:', err);
+        });
+      }
+
+      // Fallback local layout filling without AI
+      const filledArticles = mergedArticles.map(c => {
+        const needsLocalFill = !c.titleRu || !c.summaryOneLine || !c.summaryThreeLines;
+        if (needsLocalFill) {
+          const cleanSnippet = (c.contentSnippet || c.content || '').replace(/<[^>]*>/g, '').trim();
+          return {
+            ...c,
+            titleRu: c.titleRu || c.title,
+            summaryOneLine: c.summaryOneLine || (cleanSnippet ? (cleanSnippet.slice(0, 105) + '...') : c.title),
+            summaryThreeLines: c.summaryThreeLines || (cleanSnippet ? (cleanSnippet.slice(0, 280) + '...') : c.content || ''),
+            keyTerms: c.keyTerms || ['Инфо', c.feedCategory || 'Общие'],
+          };
+        }
+        return c;
+      });
+
+      setArticles(filledArticles);
+      saveStoredArticles(filledArticles, currentUser?.id || undefined);
+      playUiSound('success');
+      setRefreshStatusMessage('Ленты и облачная история успешно синхронизированы!');
+
+      // Trigger AI formatting & Russian translation for unformatted articles ONLY if auto-processing is enabled
+      const unformatted = filledArticles.filter(a => a.feedId !== 'search-results' && (!(a.ai?.summaryOneLine || a.summaryOneLine) || !(a.ai?.summaryThreeLines || a.summaryThreeLines))).slice(0, 15);
+      if (enableAutoAiProcessing && unformatted.length > 0) {
+        setRefreshStatusMessage(`ИИ-транслятор: Адаптация и перевод ${unformatted.length} новых карточек...`);
+        const processed = await aiProcessArticles(unformatted, customAiPrompt);
+        if (processed && processed.length > 0) {
+          setArticles((current) => {
+            const pMap = new Map<string, Article>();
+            processed.forEach(p => pMap.set(p.id, p));
+            return current.map(c => {
+              const p = pMap.get(c.id);
+              if (p) {
+                return {
+                  ...c,
+                  titleRu: p.ai?.titleRu || c.ai?.titleRu || c.titleRu || c.title,
+                  summaryOneLine: p.ai?.summaryOneLine || c.ai?.summaryOneLine || c.summaryOneLine,
+                  summaryThreeLines: p.ai?.summaryThreeLines || c.ai?.summaryThreeLines || c.summaryThreeLines,
+                  detailedContent: p.ai?.detailedContent || c.ai?.detailedContent || c.detailedContent,
+                  keyTerms: p.ai?.keyTerms || c.ai?.keyTerms || c.keyTerms,
+                };
+              }
+              return c;
+            });
+          });
+          setRefreshStatusMessage('Формирование карточек успешно завершено!');
+          playUiSound('success');
+        }
+      }
+
       // Keep message briefly so the user can read the result
       await new Promise(resolve => setTimeout(resolve, 800));
     } catch (err) {
@@ -991,7 +953,25 @@ export default function App() {
 
   const handleToggleStar = (articleId: string) => {
     setArticles((prev) => {
-      const next = prev.map((a) => (a.id === articleId ? { ...a, isStarred: !a.isStarred } : a));
+      let updatedArticle: Article | null = null;
+      const next = prev.map((a) => {
+        if (a.id === articleId) {
+          updatedArticle = {
+            ...a,
+            isStarred: !a.isStarred,
+            updatedAt: new Date().toISOString()
+          };
+          return updatedArticle;
+        }
+        return a;
+      });
+
+      if (updatedArticle) {
+        saveNewsCardToFirestore(updatedArticle).catch((err) => {
+          console.warn('[Firestore NewsCards] Failed to save starred state:', err);
+        });
+      }
+
       saveStoredArticles(next, currentUser?.id || undefined);
       return next;
     });
@@ -999,7 +979,106 @@ export default function App() {
 
   const handleToggleRead = (articleId: string) => {
     setArticles((prev) => {
-      const next = prev.map((a) => (a.id === articleId ? { ...a, isRead: true } : a));
+      let updatedArticle: Article | null = null;
+      const next = prev.map((a) => {
+        if (a.id === articleId) {
+          const nextIsRead = a.isRead === undefined ? true : !a.isRead;
+          updatedArticle = {
+            ...a,
+            isRead: nextIsRead,
+            updatedAt: new Date().toISOString()
+          };
+          return updatedArticle;
+        }
+        return a;
+      });
+
+      if (updatedArticle) {
+        saveNewsCardToFirestore(updatedArticle).catch((err) => {
+          console.warn('[Firestore NewsCards] Failed to save read state:', err);
+        });
+      }
+
+      saveStoredArticles(next, currentUser?.id || undefined);
+      return next;
+    });
+  };
+
+  const handleToggleSavedLater = (articleId: string) => {
+    setArticles((prev) => {
+      let updatedArticle: Article | null = null;
+      const next = prev.map((a) => {
+        if (a.id === articleId) {
+          const nextSaved = !(a.savedLater || a.isSavedLater);
+          updatedArticle = {
+            ...a,
+            savedLater: nextSaved,
+            isSavedLater: nextSaved,
+            updatedAt: new Date().toISOString()
+          };
+          return updatedArticle;
+        }
+        return a;
+      });
+
+      if (updatedArticle) {
+        saveNewsCardToFirestore(updatedArticle).catch((err) => {
+          console.warn('[Firestore NewsCards] Failed to save savedLater state:', err);
+        });
+      }
+
+      saveStoredArticles(next, currentUser?.id || undefined);
+      return next;
+    });
+  };
+
+  const handleHideArticle = (articleId: string) => {
+    setArticles((prev) => {
+      let updatedArticle: Article | null = null;
+      const next = prev.map((a) => {
+        if (a.id === articleId) {
+          updatedArticle = {
+            ...a,
+            isHidden: !a.isHidden,
+            updatedAt: new Date().toISOString()
+          };
+          return updatedArticle;
+        }
+        return a;
+      });
+
+      if (updatedArticle) {
+        saveNewsCardToFirestore(updatedArticle).catch((err) => {
+          console.warn('[Firestore NewsCards] Failed to save hidden state:', err);
+        });
+      }
+
+      saveStoredArticles(next, currentUser?.id || undefined);
+      return next;
+    });
+  };
+
+  const handleSaveUserNote = (articleId: string, noteText: string) => {
+    setArticles((prev) => {
+      let updatedArticle: Article | null = null;
+      const next = prev.map((a) => {
+        if (a.id === articleId) {
+          updatedArticle = {
+            ...a,
+            userNote: noteText,
+            updatedAt: new Date().toISOString()
+          };
+          return updatedArticle;
+        }
+        return a;
+      });
+
+      if (updatedArticle) {
+        saveNewsCardToFirestore(updatedArticle).catch((err) => {
+          console.warn('[Firestore NewsCards] Failed to save user note state:', err);
+        });
+      }
+
       saveStoredArticles(next, currentUser?.id || undefined);
       return next;
     });
@@ -1007,6 +1086,13 @@ export default function App() {
 
   const handleDeleteArticle = (articleId: string) => {
     setArticles((prev) => {
+      const target = prev.find((a) => a.id === articleId);
+      if (target) {
+        const hiddenArt = { ...target, isHidden: true, updatedAt: new Date().toISOString() };
+        saveNewsCardToFirestore(hiddenArt).catch((err) => {
+          console.warn('[Firestore NewsCards] Failed to save hidden state on delete:', err);
+        });
+      }
       const next = prev.filter((a) => a.id !== articleId);
       saveStoredArticles(next, currentUser?.id || undefined);
       return next;
@@ -1188,25 +1274,103 @@ export default function App() {
     saveStoredProfiles(nextProfiles);
   };
 
-  const handleRestoreBackup = (importedProfiles: UserProfile[]) => {
-    if (Array.isArray(importedProfiles) && importedProfiles.length > 0) {
-      setProfiles(importedProfiles);
-      saveStoredProfiles(importedProfiles);
-      const active = importedProfiles.find((p) => p.id === activeSessionId) || importedProfiles[0];
-      if (active) {
-        setActiveSessionId(active.id);
-        saveActiveSessionUserId(active.id);
-        setNotes(active.notes || []);
-        setTimers(active.timers || []);
-        setBookmarks(Array.isArray(active.bookmarks) ? active.bookmarks : INITIAL_BOOKMARKS);
-        setFeeds(Array.isArray(active.feeds) ? active.feeds : ENGINEER_DEFAULT_FEEDS);
-        setWorkSchedules(active.workSchedules || {});
-        setAccessibility(active.accessibility || { scalePercent: 100, visualAcuity: 'Не указывать' });
-        setAppStyle(active.appStyle || 'engineer');
-        setCustomWallpaper(active.customWallpaper || '');
-        setCustomAiPrompt(active.customAiPrompt || DEFAULT_AI_PROMPTS[active.appStyle || 'engineer'] || DEFAULT_AI_PROMPTS.engineer);
-      }
+  const handleRestoreBackup = (
+    importedProfiles: UserProfile[],
+    extraNotes?: MedicalNote[],
+    extraTimers?: MedicalTimerItem[],
+    extraAccessibility?: AccessibilityConfig
+  ) => {
+    if (!Array.isArray(importedProfiles) || importedProfiles.length === 0) return;
+
+    // Target UID is strictly current authenticated firebaseUser.uid or in dev mode fallback activeSessionId
+    const targetId = firebaseUser?.uid || (isDevMode ? activeSessionId : null);
+    if (!targetId && !currentUser) return;
+
+    const currentBase = currentUser || profiles.find((p) => p.id === targetId) || {
+      id: targetId || 'user-default',
+      email: firebaseUser?.email || 'user@local.desk',
+      username: firebaseUser?.displayName || 'Пользователь',
+      displayName: firebaseUser?.displayName || 'Пользователь',
+      role: 'user' as const,
+    };
+
+    const actualTargetId = currentBase.id;
+
+    // Match imported profile by targetId if present, else use first imported profile as settings source
+    const sourceProfile = importedProfiles.find((p) => p.id === actualTargetId) || importedProfiles[0];
+
+    // Data values restored with ?? to respect valid empty strings, empty arrays, false, 0
+    const restoredNotes = extraNotes ?? sourceProfile?.notes ?? currentBase.notes ?? [];
+    const restoredTimers = extraTimers ?? sourceProfile?.timers ?? currentBase.timers ?? [];
+    const restoredBookmarks = Array.isArray(sourceProfile?.bookmarks) ? sourceProfile.bookmarks : (currentBase.bookmarks ?? INITIAL_BOOKMARKS);
+    const restoredFeeds = Array.isArray(sourceProfile?.feeds) ? sourceProfile.feeds : (currentBase.feeds ?? ENGINEER_DEFAULT_FEEDS);
+    const restoredSchedules = sourceProfile?.workSchedules ?? currentBase.workSchedules ?? {};
+    const restoredAccessibility = extraAccessibility ?? sourceProfile?.accessibility ?? currentBase.accessibility ?? { scalePercent: 100, visualAcuity: 'Не указывать' };
+    const restoredStyle = sourceProfile?.appStyle ?? currentBase.appStyle ?? 'engineer';
+    const restoredWallpaper = sourceProfile?.customWallpaper ?? currentBase.customWallpaper ?? '';
+    const restoredPrompt = sourceProfile?.customAiPrompt ?? currentBase.customAiPrompt ?? (DEFAULT_AI_PROMPTS[restoredStyle] || DEFAULT_AI_PROMPTS.engineer);
+    const restoredHours = Array.isArray(sourceProfile?.scheduledHours) ? sourceProfile.scheduledHours : (currentBase.scheduledHours ?? [6, 12, 19]);
+    const restoredConfig = sourceProfile?.workspaceConfig ? { ...DEFAULT_WORKSPACE_CONFIG, ...sourceProfile.workspaceConfig } : (currentBase.workspaceConfig ?? { ...DEFAULT_WORKSPACE_CONFIG });
+    const restoredProvider = sourceProfile?.aiProvider ?? currentBase.aiProvider ?? 'gemini';
+    const restoredApiKey = sourceProfile?.aiApiKey ?? currentBase.aiApiKey ?? '';
+    const restoredModel = sourceProfile?.aiModel ?? currentBase.aiModel ?? '';
+    const restoredUrl = sourceProfile?.aiUrl ?? currentBase.aiUrl ?? '';
+    const restoredEnableAutoAi = sourceProfile?.enableAutoAiProcessing ?? currentBase.enableAutoAiProcessing;
+
+    // Construct restored profile PRESERVING current user Firebase identity
+    const restoredUser: UserProfile = {
+      ...currentBase,
+      id: actualTargetId, // Firebase identity preserved!
+      email: currentBase.email,
+      username: currentBase.username,
+      displayName: currentBase.displayName,
+      role: currentBase.role,
+      notes: restoredNotes,
+      timers: restoredTimers,
+      bookmarks: restoredBookmarks,
+      feeds: restoredFeeds,
+      workSchedules: restoredSchedules,
+      accessibility: restoredAccessibility,
+      appStyle: restoredStyle,
+      customWallpaper: restoredWallpaper,
+      customAiPrompt: restoredPrompt,
+      scheduledHours: restoredHours,
+      workspaceConfig: restoredConfig,
+      aiProvider: restoredProvider,
+      aiApiKey: restoredApiKey,
+      aiModel: restoredModel,
+      aiUrl: restoredUrl,
+      enableAutoAiProcessing: restoredEnableAutoAi,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Update state directly without changing activeSessionId or Firebase identity
+    setNotes(restoredNotes);
+    setTimers(restoredTimers);
+    setBookmarks(restoredBookmarks);
+    setFeeds(restoredFeeds);
+    setWorkSchedules(restoredSchedules);
+    setAccessibility(restoredAccessibility);
+    setAppStyle(restoredStyle);
+    setCustomWallpaper(restoredWallpaper);
+    setCustomAiPrompt(restoredPrompt);
+    setScheduledHours(restoredHours);
+
+    // Save locally and sync to Cloud Firestore
+    saveStoredMedicalNotes(restoredNotes, actualTargetId);
+    saveStoredMedicalTimers(restoredTimers, actualTargetId);
+    saveStoredBookmarks(restoredBookmarks, actualTargetId);
+    saveStoredWorkSchedules(restoredSchedules, actualTargetId);
+    saveStoredAccessibility(restoredAccessibility, actualTargetId);
+    saveAISettings(restoredProvider, restoredApiKey, restoredModel, restoredUrl, restoredUser);
+
+    const nextProfiles = profiles.map((p) => (p.id === actualTargetId ? restoredUser : p));
+    if (!nextProfiles.some((p) => p.id === actualTargetId)) {
+      nextProfiles.push(restoredUser);
     }
+    setProfiles(nextProfiles);
+    saveStoredProfiles(nextProfiles);
+    syncUserProfileToServer(restoredUser);
   };
 
   const effectiveActiveId = firebaseUser ? firebaseUser.uid : activeSessionId;
