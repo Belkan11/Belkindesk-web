@@ -31,7 +31,7 @@ export async function fetchFeedArticles(feed: any, limit = 50): Promise<FeedFetc
         excludeKeywords: feed.excludeKeywords,
         keywordMode: feed.keywordMode,
         category: feed.feedCategory || feed.category,
-        title: feed.feedTitle || feed.title || feed.name
+        title: feed.feedTitle || feed.name || feed.title
       }),
     });
 
@@ -41,15 +41,25 @@ export async function fetchFeedArticles(feed: any, limit = 50): Promise<FeedFetc
     }
 
     const rawArticles = data.articles || [];
-    const articles = rawArticles.slice(0, limit).map((art: Article) => ({
-      ...art,
-      feedId: feed.feedId || feed.id,
-      feedTitle: feed.feedTitle || feed.title || feed.name || art.feedTitle || 'Лента новостей',
-      feedCategory: feed.feedCategory || feed.category,
-    }));
+    const articles = rawArticles.slice(0, limit).map((art: Article) => {
+      const feedId = feed.feedId || feed.id || art.feedId || '';
+      const feedTitle = feed.feedTitle || feed.name || feed.title || art.feedTitle || 'Лента новостей';
+      const sourceId = feed.sourceId || (feed.sources && feed.sources[0]?.id) || feed.id || art.sourceId || '';
+      const sourceName = feed.sourceName || feed.name || feed.title || art.sourceName || art.feedTitle || 'Источник';
+      const feedCategory = feed.feedCategory || feed.category || art.feedCategory;
+
+      return {
+        ...art,
+        feedId,
+        feedTitle,
+        sourceId,
+        sourceName,
+        feedCategory,
+      };
+    });
 
     return {
-      title: data.title || feed.title || feed.name,
+      title: data.title || feed.feedTitle || feed.name || feed.title,
       description: data.description,
       link: data.link,
       itemCount: articles.length,
@@ -57,10 +67,10 @@ export async function fetchFeedArticles(feed: any, limit = 50): Promise<FeedFetc
     };
   } catch (err: unknown) {
     const error = err as Error;
-    console.warn(`Error loading feed ${feed.title || feed.name}:`, error.message);
+    console.warn(`Error loading feed ${feed.name || feed.title || feed.feedTitle}:`, error.message);
     
     return {
-      title: feed.title || feed.name,
+      title: feed.name || feed.title || feed.feedTitle || 'Источник',
       description: feed.description || 'Лента не доступна',
       articles: [],
       itemCount: 0,

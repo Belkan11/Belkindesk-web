@@ -120,7 +120,7 @@ export function deduplicateArticles(newArticles: any[], currentArticles: any[]):
     
     uniqueNewArticles.push({
       ...art,
-      id: getStableCardId(art)
+      id: art.id || getStableCardId(art)
     });
   });
 

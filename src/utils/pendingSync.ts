@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc, deleteDoc, runTransaction } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
 import { PendingOperation, PendingEntityType, UserProfile, NewsCard } from '../types';
 
 const activeFlushes = new Set<string>();
@@ -213,6 +213,10 @@ export function calculateBackoffDelay(retryCount: number): number {
  */
 export function resetRetryState(userId: string): void {
   if (!userId) return;
+  const currentUid = auth.currentUser?.uid;
+  if (currentUid && currentUid !== userId) {
+    return;
+  }
   clearRetryTimer(userId);
   const queue = getPendingQueue(userId);
   if (queue.length === 0) return;
@@ -595,6 +599,13 @@ async function withFlushLock<T>(userId: string, fn: () => Promise<T>): Promise<T
  */
 export async function flushPendingQueue(userId: string): Promise<void> {
   if (!userId) return;
+
+  // Strict UID Guard: Never flush pending queue if requested userId does not match currently authenticated Firebase user
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid || currentUid !== userId) {
+    return;
+  }
+
   // Offline Guard: Do not attempt network calls if browser is offline
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     return;
@@ -814,24 +825,6 @@ export async function flushPendingQueue(userId: string): Promise<void> {
     } finally {
       activeFlushes.delete(userId);
     }
-  });
-}
-
-// Global Reconnect Listener
-if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => {
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('belkindesk_pending_sync_v1_')) {
-          const uid = key.replace('belkindesk_pending_sync_v1_', '');
-          if (uid) {
-            resetRetryState(uid);
-            flushPendingQueue(uid).catch(() => {});
-          }
-        }
-      }
-    } catch {}
   });
 }
 

@@ -62,7 +62,7 @@ import {
   mergeCloudAndRssArticles,
   getStableCardId 
 } from './utils/newsCardsCloud';
-import { flushPendingQueue, reconcileRealtimeWithPendingQueue, getPendingQueue } from './utils/pendingSync';
+import { flushPendingQueue, resetRetryState, reconcileRealtimeWithPendingQueue, getPendingQueue } from './utils/pendingSync';
 
 import { AuthGateScreen } from './components/AuthGateScreen';
 import { BelkinHeader } from './components/BelkinHeader';
@@ -126,6 +126,7 @@ export default function App() {
     if (!firebaseUser?.uid) return;
 
     const handleOnline = () => {
+      resetRetryState(firebaseUser.uid);
       flushPendingQueue(firebaseUser.uid).catch((err) => {
         console.warn('[PendingSync] Flush queue error:', err);
       });
@@ -142,7 +143,37 @@ export default function App() {
   // Active current user profile
   const currentUser = useMemo<UserProfile | null>(() => {
     const effectiveActiveId = firebaseUser ? firebaseUser.uid : activeSessionId;
-    return profiles.find((p) => p.id === effectiveActiveId) || null;
+    if (!effectiveActiveId) return null;
+    const found = profiles.find((p) => p.id === effectiveActiveId);
+    if (found) return found;
+
+    if (firebaseUser && firebaseUser.uid === effectiveActiveId) {
+      const email = firebaseUser.email || `${effectiveActiveId}@pulsedesk.local`;
+      const displayName = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Пользователь';
+      const isBelkin = displayName.toLowerCase().includes('belkin') || email.toLowerCase().includes('belikovich') || effectiveActiveId === 'user-admin-belkin';
+      return {
+        id: effectiveActiveId,
+        username: displayName,
+        login: displayName,
+        email: email,
+        displayName: displayName,
+        role: isBelkin ? 'admin' : 'user',
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        notes: [],
+        timers: [],
+        feeds: [...ENGINEER_DEFAULT_FEEDS],
+        bookmarks: [...INITIAL_BOOKMARKS],
+        workSchedules: {},
+        accessibility: { scalePercent: 100, visualAcuity: 'Не указывать' },
+        appStyle: 'engineer',
+        customWallpaper: '',
+        customAiPrompt: DEFAULT_AI_PROMPTS.engineer,
+        scheduledHours: [6, 12, 19],
+      };
+    }
+    return null;
   }, [profiles, activeSessionId, firebaseUser]);
 
   const [activeTab, setActiveTab] = useState<'notes' | 'news'>('news');
@@ -507,8 +538,10 @@ export default function App() {
               excludeKeywords: [...(source.excludeKeywords || []), ...(feed.excludeKeywords || [])],
               keywordMode: source.keywordMode || feed.keywordMode || 'ANY',
               feedId: feed.id,
-              feedTitle: feed.name,
-              feedCategory: feed.category
+              feedTitle: feed.name || (feed as any).title,
+              feedCategory: feed.category,
+              sourceId: source.id || feed.id,
+              sourceName: source.name || feed.name || (feed as any).title,
             };
             const feedResult = await fetchFeedArticles(fetchConfig as any, feed.maxArticles || 50);
             if (feedResult.error) {
@@ -692,16 +725,16 @@ export default function App() {
         let matchedFeed = feeds.find(f => f.id === art.feedId);
         
         if (!matchedFeed || art.feedId === 'search-results') {
-          // Attempt keywords matchmaking
+          // Attempt matchmaking
           for (const f of feeds) {
-            const fTitle = (f.title || '').toLowerCase();
+            const fName = (f.name || (f as any).title || '').toLowerCase();
             const fQuery = (f.searchQuery || '').toLowerCase();
             
             const isMatch = 
-              (fTitle.includes('4pda') && textToSearch.includes('4pda')) ||
-              (fTitle.includes('youtube') && (textToSearch.includes('youtube') || textToSearch.includes('youtu.be') || textToSearch.includes('видео'))) ||
-              (fTitle.includes('reddit') && textToSearch.includes('reddit')) ||
-              (fTitle.includes('pikabu') && textToSearch.includes('pikabu')) ||
+              (fName.includes('4pda') && textToSearch.includes('4pda')) ||
+              (fName.includes('youtube') && (textToSearch.includes('youtube') || textToSearch.includes('youtu.be') || textToSearch.includes('видео'))) ||
+              (fName.includes('reddit') && textToSearch.includes('reddit')) ||
+              (fName.includes('pikabu') && textToSearch.includes('pikabu')) ||
               (fQuery && textToSearch.includes(fQuery)) ||
               (f.hashtags && f.hashtags.some(tag => textToSearch.includes(tag.toLowerCase().replace('#', ''))));
 
@@ -713,12 +746,13 @@ export default function App() {
         }
 
         if (matchedFeed && matchedFeed.id !== art.feedId) {
+          const feedDisplayName = matchedFeed.name || (matchedFeed as any).title || 'Источник';
           movedCount++;
-          logToServer('info', `Статья "${(art.ai?.titleRu || art.titleRu) || art.title}" перемещена в источник [${matchedFeed.title}] (категория: ${matchedFeed.category})`);
+          logToServer('info', `Статья "${(art.ai?.titleRu || art.titleRu) || art.title}" перемещена в источник [${feedDisplayName}] (категория: ${matchedFeed.category})`);
           return {
             ...art,
             feedId: matchedFeed.id,
-            feedTitle: matchedFeed.title,
+            feedTitle: feedDisplayName,
             feedCategory: matchedFeed.category || 'Общие',
           };
         }
@@ -1273,7 +1307,6 @@ export default function App() {
           version: (f.version || 0) + 1,
         }));
       const completeFeeds = [...updates.feeds, ...tombstones];
-      setFeeds(completeFeeds);
       patchPayload.feeds = completeFeeds;
     }
     if (updates.bookmarks !== undefined) {
@@ -1288,9 +1321,35 @@ export default function App() {
           version: (b.version || 0) + 1,
         }));
       const completeBookmarks = [...updates.bookmarks, ...tombstones];
-      setBookmarks(completeBookmarks);
-      saveStoredBookmarks(completeBookmarks, currentUser.id);
       patchPayload.bookmarks = completeBookmarks;
+    }
+    if (updates.notes !== undefined) {
+      const inputIds = new Set(updates.notes.map((n) => n.id).filter(Boolean));
+      const tombstones = notes
+        .filter((n) => n.id && !inputIds.has(n.id))
+        .map((n) => ({
+          ...n,
+          deleted: true,
+          deletedAt: n.deletedAt || nowIso,
+          updatedAt: nowIso,
+          version: (n.version || 0) + 1,
+        }));
+      const completeNotes = [...updates.notes, ...tombstones];
+      patchPayload.notes = completeNotes;
+    }
+    if (updates.timers !== undefined) {
+      const inputIds = new Set(updates.timers.map((t) => t.id).filter(Boolean));
+      const tombstones = timers
+        .filter((t) => t.id && !inputIds.has(t.id))
+        .map((t) => ({
+          ...t,
+          deleted: true,
+          deletedAt: t.deletedAt || nowIso,
+          updatedAt: nowIso,
+          version: (t.version || 0) + 1,
+        }));
+      const completeTimers = [...updates.timers, ...tombstones];
+      patchPayload.timers = completeTimers;
     }
 
     // 1. Build the updated profile immediately
@@ -1300,21 +1359,21 @@ export default function App() {
       updatedAt: nowIso
     };
 
-    // 2. Synchronously update all individual states in React
-    if (updates.feeds !== undefined) {
-      setFeeds(updates.feeds);
+    // 2. Synchronously update all individual states in React using patchPayload (preserving complete arrays + tombstones)
+    if (patchPayload.feeds !== undefined) {
+      setFeeds(patchPayload.feeds);
     }
-    if (updates.bookmarks !== undefined) {
-      setBookmarks(updates.bookmarks);
-      saveStoredBookmarks(updates.bookmarks, currentUser.id);
+    if (patchPayload.bookmarks !== undefined) {
+      setBookmarks(patchPayload.bookmarks);
+      saveStoredBookmarks(patchPayload.bookmarks, currentUser.id);
     }
-    if (updates.notes !== undefined) {
-      setNotes(updates.notes);
-      saveStoredMedicalNotes(updates.notes, currentUser.id);
+    if (patchPayload.notes !== undefined) {
+      setNotes(patchPayload.notes);
+      saveStoredMedicalNotes(patchPayload.notes, currentUser.id);
     }
-    if (updates.timers !== undefined) {
-      setTimers(updates.timers);
-      saveStoredMedicalTimers(updates.timers, currentUser.id);
+    if (patchPayload.timers !== undefined) {
+      setTimers(patchPayload.timers);
+      saveStoredMedicalTimers(patchPayload.timers, currentUser.id);
     }
     if (updates.accessibility !== undefined) {
       setAccessibility(updates.accessibility);
@@ -1342,7 +1401,7 @@ export default function App() {
     saveStoredProfiles(nextProfiles);
 
     // 4. Send granular fields update request to server with lastKnownTime check
-    syncUserProfileFieldsToServer(currentUser.id, updates, lastKnownTime).catch((err) => {
+    syncUserProfileFieldsToServer(currentUser.id, patchPayload, lastKnownTime).catch((err) => {
       console.error('Failed to sync updated workspace settings:', err);
     });
   };
@@ -1353,7 +1412,25 @@ export default function App() {
     const nextProfiles = profiles.map((p) => (p.id === profileWithTime.id ? profileWithTime : p));
     setProfiles(nextProfiles);
     saveStoredProfiles(nextProfiles);
-    syncUserProfileToServer(profileWithTime);
+
+    if (firebaseUser && firebaseUser.uid === updatedProfile.id) {
+      const lastKnownTime = currentUser?.updatedAt;
+      syncUserProfileFieldsToServer(updatedProfile.id, {
+        username: updatedProfile.username,
+        displayName: updatedProfile.displayName,
+        profession: updatedProfile.profession,
+        specialty: updatedProfile.specialty,
+        specialization: updatedProfile.specialization,
+        bio: updatedProfile.bio,
+        about: updatedProfile.about,
+        avatar: updatedProfile.avatar,
+        updatedAt: profileWithTime.updatedAt,
+      }, lastKnownTime).catch((err) => {
+        console.error('Failed to save profile fields:', err);
+      });
+    } else if (isDevMode) {
+      syncUserProfileToServer(profileWithTime);
+    }
   };
 
   const handleCreateUser = async (newUser: UserProfile) => {
@@ -1547,7 +1624,32 @@ export default function App() {
     }
     setProfiles(nextProfiles);
     saveStoredProfiles(nextProfiles);
-    syncUserProfileToServer(restoredUser);
+    if (firebaseUser && firebaseUser.uid === actualTargetId) {
+      const patchFields = {
+        notes: restoredNotes,
+        timers: restoredTimers,
+        bookmarks: restoredBookmarks,
+        feeds: restoredFeeds,
+        workSchedules: restoredSchedules,
+        accessibility: restoredAccessibility,
+        appStyle: restoredStyle,
+        customWallpaper: restoredWallpaper,
+        customAiPrompt: restoredPrompt,
+        scheduledHours: restoredHours,
+        workspaceConfig: restoredConfig,
+        aiProvider: restoredProvider,
+        aiApiKey: restoredApiKey,
+        aiModel: restoredModel,
+        aiUrl: restoredUrl,
+        enableAutoAiProcessing: restoredEnableAutoAi,
+        updatedAt: restoredUser.updatedAt,
+      };
+      syncUserProfileFieldsToServer(actualTargetId, patchFields, currentBase.updatedAt).catch((err) => {
+        console.error('Failed to restore backup fields to server:', err);
+      });
+    } else if (isDevMode) {
+      syncUserProfileToServer(restoredUser);
+    }
   };
 
   const effectiveActiveId = firebaseUser ? firebaseUser.uid : activeSessionId;

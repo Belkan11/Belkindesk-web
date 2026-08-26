@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Search, Star, AlignLeft, LayoutGrid, Image as ImageIcon, Sparkles, Clock, Check, Trash2, Plus, RotateCw } from 'lucide-react';
 import { Article, FeedConfig, AppArchetypeStyle } from '../types';
+import { isArticleInFeed } from '../utils/feedUtils';
 
 interface MedicalNewsPaneProps {
   articles: Article[];
@@ -56,9 +57,16 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
   // Filter articles based on feed, search, and starred filter (no hard limits in search area)
   const filteredArticles = React.useMemo(() => {
     const rawMatches = articles.filter((art) => {
-      if (art.isHidden) return false;
+      if (art.isHidden || art.deleted) return false;
       if (isStarredFilter && !art.isStarred) return false;
-      if (activeFeedId && art.feedId !== activeFeedId) return false;
+      if (activeFeedId) {
+        const activeFeed = feeds.find((f) => f.id === activeFeedId);
+        if (activeFeed) {
+          if (!isArticleInFeed(art, activeFeed)) return false;
+        } else if (art.feedId !== activeFeedId) {
+          return false;
+        }
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (
@@ -68,6 +76,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
           ((art.ai?.summaryThreeLines || art.summaryThreeLines) && (art.ai?.summaryThreeLines || art.summaryThreeLines).toLowerCase().includes(q)) ||
           art.contentSnippet?.toLowerCase().includes(q) ||
           art.feedTitle?.toLowerCase().includes(q) ||
+          art.sourceName?.toLowerCase().includes(q) ||
           (art.categories && art.categories.some((c) => c.toLowerCase().includes(q))) ||
           ((art.ai?.keyTerms || art.keyTerms) && (art.ai?.keyTerms || art.keyTerms).some((k) => k.toLowerCase().includes(q)))
         );
@@ -80,7 +89,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
       return rawMatches.slice(0, 100);
     }
 
-    // If searching, do NOT apply the limit of 10 articles per source
+    // If searching, do NOT apply the limit of 50 articles per source
     if (searchQuery.trim()) {
       return rawMatches;
     }
@@ -89,7 +98,8 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
     const countPerSource: Record<string, number> = {};
     const result: Article[] = [];
     for (const art of rawMatches) {
-      const sourceKey = art.feedId || art.feedTitle || 'default';
+      const matchingFeed = feeds.find((f) => isArticleInFeed(art, f));
+      const sourceKey = matchingFeed ? matchingFeed.id : (art.feedId || art.sourceId || art.feedTitle || art.id);
       const currentCount = countPerSource[sourceKey] || 0;
       if (currentCount < 50) {
         countPerSource[sourceKey] = currentCount + 1;
@@ -97,9 +107,9 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
       }
     }
     return result;
-  }, [articles, isStarredFilter, activeFeedId, searchQuery]);
+  }, [articles, feeds, isStarredFilter, activeFeedId, searchQuery]);
 
-  const starredCount = articles.filter((a) => a.isStarred && !a.isHidden).length;
+  const starredCount = articles.filter((a) => a.isStarred && !a.isHidden && !a.deleted).length;
 
   return (
     <div className={`flex-1 flex flex-col overflow-hidden p-2.5 font-mono text-xs select-none transition-all duration-300 ${
@@ -185,14 +195,16 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
               }`}
             >
               <span>Все источники</span>
-              <span className="text-[10px] opacity-75 font-mono">{articles.length}</span>
+              <span className="text-[10px] opacity-75 font-mono">{articles.filter((a) => !a.isHidden && !a.deleted).length}</span>
             </button>
 
             <div className={`pt-1 pb-1 border-b ${isModern ? 'border-cyan-500/20' : 'border-[#20252e]/70'}`}></div>
 
             {feeds.map((feed) => {
               const isSelected = activeFeedId === feed.id && !isStarredFilter;
-              const count = articles.filter((a) => a.feedId === feed.id && !a.isHidden).length;
+              const count = articles.filter((a) => !a.isHidden && !a.deleted && isArticleInFeed(a, feed)).length;
+              const feedName = feed.name || (feed as any).title || 'Источник';
+              const isFeedDisabled = feed.enabled === false;
 
               return (
                 <button
@@ -207,18 +219,22 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
                       ? isModern
                         ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/50 font-bold shadow-[0_0_8px_rgba(56,189,248,0.3)]'
                         : 'bg-[#2a2417] text-[#ffcc00] border border-[#ffcc00]/40 font-bold'
+                      : isFeedDisabled
+                      ? 'text-slate-500 opacity-60 hover:opacity-100 hover:bg-[#161a22]'
                       : isModern
                       ? 'text-slate-300 hover:text-cyan-200 hover:bg-cyan-950/30'
                       : 'text-slate-300 hover:bg-[#161a22]'
                   }`}
-                  title={feed.title}
+                  title={`${feedName}${isFeedDisabled ? ' (Отключен)' : ''}`}
                 >
-                  <span className="truncate leading-tight">{feed.title}</span>
-                  {count > 0 && (
-                    <span className={`text-[9px] shrink-0 font-mono ${isModern ? 'text-cyan-400/80' : 'text-slate-500'}`}>
-                      {count}
-                    </span>
-                  )}
+                  <span className="truncate leading-tight">{feedName}</span>
+                  <span className={`text-[9px] shrink-0 font-mono ${
+                    isSelected
+                      ? (isModern ? 'text-cyan-300 font-bold' : 'text-[#ffcc00] font-bold')
+                      : (isModern ? 'text-cyan-400/80' : 'text-slate-500')
+                  }`}>
+                    {count}
+                  </span>
                 </button>
               );
             })}
@@ -257,7 +273,7 @@ export const MedicalNewsPane: React.FC<MedicalNewsPaneProps> = ({
             <div className="flex items-center gap-2">
               <span className={`font-bold ${isModern ? 'text-cyan-200 drop-shadow-[0_0_6px_rgba(56,189,248,0.5)]' : 'text-[#ffcc00]'}`}>
                 {activeFeedId
-                  ? feeds.find((f) => f.id === activeFeedId)?.title || 'Выбранный канал'
+                  ? (feeds.find((f) => f.id === activeFeedId)?.name || feeds.find((f) => f.id === activeFeedId)?.title || 'Выбранный канал')
                   : isStarredFilter
                   ? 'Избранные новости'
                   : 'Лента новостей'}
