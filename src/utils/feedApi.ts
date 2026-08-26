@@ -1,4 +1,5 @@
 import { Article, FeedConfig, AIDiscoveredFeed, AIDigestResult } from '../types';
+import { getActiveSessionUserId, getStoredProfiles } from './storage';
 
 export interface FeedFetchResult {
   title: string;
@@ -76,10 +77,29 @@ export async function discoverFeedsFromUrl(url: string) {
 function getAiHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   try {
-    const key = localStorage.getItem('belkin_user_ai_key');
-    const provider = localStorage.getItem('belkin_user_ai_provider');
-    const model = localStorage.getItem('belkin_user_ai_model');
-    const url = localStorage.getItem('belkin_user_ai_url');
+    const activeUserId = getActiveSessionUserId();
+    const providerKey = activeUserId ? `belkin_user_ai_provider_${activeUserId}` : 'belkin_user_ai_provider';
+    const keyKey = activeUserId ? `belkin_user_ai_key_${activeUserId}` : 'belkin_user_ai_key';
+    const modelKey = activeUserId ? `belkin_user_ai_model_${activeUserId}` : 'belkin_user_ai_model';
+    const urlKey = activeUserId ? `belkin_user_ai_url_${activeUserId}` : 'belkin_user_ai_url';
+
+    let key = localStorage.getItem(keyKey);
+    let provider = localStorage.getItem(providerKey);
+    let model = localStorage.getItem(modelKey);
+    let url = localStorage.getItem(urlKey);
+
+    // Fallback to profile restored from Firestore if localStorage cache key is missing
+    if (activeUserId && (!key || !provider)) {
+      const profiles = getStoredProfiles();
+      const activeUser = profiles.find((p) => p.id === activeUserId);
+      if (activeUser) {
+        if (!key && activeUser.aiApiKey) key = activeUser.aiApiKey;
+        if (!provider && activeUser.aiProvider) provider = activeUser.aiProvider;
+        if (!model && activeUser.aiModel) model = activeUser.aiModel;
+        if (!url && activeUser.aiUrl) url = activeUser.aiUrl;
+      }
+    }
+
     if (key) headers['x-user-ai-key'] = key;
     if (provider) headers['x-user-ai-provider'] = provider;
     if (model) headers['x-user-ai-model'] = model;

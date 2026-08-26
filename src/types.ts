@@ -4,8 +4,21 @@ export interface MedicalTimerItem {
   targetTime: string; // e.g. "05:50", "14:50"
   status: 'done' | 'active' | 'pending';
   countdownSeconds?: number;
+  durationSeconds?: number;
+  hours?: number;
+  minutes?: number;
+  seconds?: number;
   isEndShift?: boolean;
   lastDoneDate?: string; // YYYY-MM-DD
+  repeatMode?: 'none' | 'daily' | 'weekdays' | 'custom';
+  repeatDays?: number[]; // [0..6] (0=Sun..6=Sat)
+  autoStart?: boolean;
+  repeatCount?: number;
+  soundId?: 'success' | 'chime' | 'bell' | 'alert' | 'star' | 'click' | string;
+  volume?: number; // 0..100
+  isMuted?: boolean;
+  vibration?: boolean;
+  notifications?: boolean;
 }
 
 export interface MedicalNote {
@@ -13,6 +26,13 @@ export interface MedicalNote {
   text: string;
   createdAt: string;
   timestampStr: string;
+  title?: string;
+  category?: string;
+  color?: string;
+  isPinned?: boolean;
+  isFavorite?: boolean;
+  tags?: string[];
+  [key: string]: any;
 }
 
 export interface MedicalDigestData {
@@ -162,7 +182,15 @@ export interface DesktopBookmark {
   description?: string;
 }
 
-export type DayShiftType = 'work-office' | 'work-remote' | 'day-off' | 'vacation' | 'sick-leave' | 'duty';
+export type DayShiftType = 'work-office' | 'work-remote' | 'day-off' | 'vacation' | 'sick-leave' | 'duty' | 'event' | string;
+
+export interface DayEntryItem {
+  id: string;
+  text: string;
+  time?: string;
+  isDone?: boolean;
+  [key: string]: any;
+}
 
 export interface WorkDaySchedule {
   date: string; // YYYY-MM-DD
@@ -170,6 +198,12 @@ export interface WorkDaySchedule {
   startTime?: string; // "09:00"
   endTime?: string; // "18:00"
   notes?: string;
+  breakMinutes?: number;
+  status?: string;
+  color?: string;
+  category?: string;
+  entries?: DayEntryItem[];
+  [key: string]: any;
 }
 
 export interface CalendarEvent {

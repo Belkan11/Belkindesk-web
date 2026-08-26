@@ -28,6 +28,8 @@ import {
   saveStoredAccessibility,
   getStoredBookmarks,
   saveStoredBookmarks,
+  getStoredWorkSchedules,
+  saveStoredWorkSchedules,
   INITIAL_BOOKMARKS,
   INITIAL_MEDICAL_TIMERS,
   syncUserProfileToServer,
@@ -115,10 +117,10 @@ export default function App() {
   }, [profiles, activeSessionId, firebaseUser]);
 
   const [activeTab, setActiveTab] = useState<'notes' | 'news'>('news');
-  const [notes, setNotes] = useState<MedicalNote[]>(() => currentUser?.notes ?? getStoredMedicalNotes());
+  const [notes, setNotes] = useState<MedicalNote[]>(() => currentUser?.notes ?? getStoredMedicalNotes(getActiveSessionUserId() || undefined));
   const [timers, setTimers] = useState<MedicalTimerItem[]>(() => currentUser?.timers ?? getStoredMedicalTimers(getActiveSessionUserId() || undefined));
-  const [bookmarks, setBookmarks] = useState<DesktopBookmark[]>(() => currentUser?.bookmarks ?? getStoredBookmarks());
-  const [accessibility, setAccessibility] = useState<AccessibilityConfig>(() => currentUser?.accessibility ?? getStoredAccessibility());
+  const [bookmarks, setBookmarks] = useState<DesktopBookmark[]>(() => currentUser?.bookmarks ?? getStoredBookmarks(getActiveSessionUserId() || undefined));
+  const [accessibility, setAccessibility] = useState<AccessibilityConfig>(() => currentUser?.accessibility ?? getStoredAccessibility(getActiveSessionUserId() || undefined));
 
   // Workspace Customization State (Style, Wallpaper, Custom Prompt, 3x/Day Schedule)
   const [appStyle, setAppStyle] = useState<AppArchetypeStyle>(() => currentUser?.appStyle ?? 'engineer');
@@ -150,7 +152,7 @@ export default function App() {
   const [isUserCabinetOpen, setIsUserCabinetOpen] = useState(false);
 
   // Sound Synthesizer
-  const playUiSound = useCallback((type: 'click' | 'success' | 'star') => {
+  const playUiSound = useCallback((type: 'click' | 'success' | 'star' | 'chime' | 'bell' | 'alert' | string) => {
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx();
@@ -176,7 +178,27 @@ export default function App() {
         gain.connect(ctx.destination);
         osc.start();
         osc.stop(ctx.currentTime + 0.19);
-      } else if (type === 'success') {
+      } else if (type === 'bell') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(783.99, ctx.currentTime);
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.42);
+      } else if (type === 'alert') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.setValueAtTime(440, ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.26);
+      } else {
+        // 'success', 'chime' and fallback
         osc.type = 'sine';
         osc.frequency.setValueAtTime(523.25, ctx.currentTime);
         osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.08);
@@ -319,6 +341,7 @@ export default function App() {
           notes: [],
           timers: [],
           feeds: [...ENGINEER_DEFAULT_FEEDS],
+          bookmarks: [...INITIAL_BOOKMARKS],
           workSchedules: {},
           accessibility: { scalePercent: 100, visualAcuity: 'Не указывать' },
           appStyle: 'engineer',
@@ -342,12 +365,13 @@ export default function App() {
   // Sync state when active user changes
   useEffect(() => {
     if (currentUser && !isProfileLoading) {
-      setNotes(currentUser.notes ?? getStoredMedicalNotes());
-      setTimers(currentUser.timers ?? getStoredMedicalTimers(currentUser.id));
-      setBookmarks(currentUser.bookmarks ?? getStoredBookmarks());
+      const uid = currentUser.id;
+      setNotes(currentUser.notes ?? getStoredMedicalNotes(uid));
+      setTimers(currentUser.timers ?? getStoredMedicalTimers(uid));
+      setBookmarks(currentUser.bookmarks ?? getStoredBookmarks(uid));
       setFeeds(currentUser.feeds ?? ENGINEER_DEFAULT_FEEDS);
-      setWorkSchedules(currentUser.workSchedules ?? {});
-      setAccessibility(currentUser.accessibility ?? getStoredAccessibility());
+      setWorkSchedules(currentUser.workSchedules ?? getStoredWorkSchedules(uid));
+      setAccessibility(currentUser.accessibility ?? getStoredAccessibility(uid));
       setAppStyle(currentUser.appStyle ?? 'engineer');
       setCustomWallpaper(currentUser.customWallpaper ?? '');
       setCustomAiPrompt(currentUser.customAiPrompt ?? DEFAULT_AI_PROMPTS[currentUser.appStyle ?? 'engineer'] ?? DEFAULT_AI_PROMPTS.engineer);
@@ -355,7 +379,13 @@ export default function App() {
       setScheduledHours(currentUser.scheduledHours ?? [6, 12, 19]);
       setLastScheduledRunDate(currentUser.lastScheduledRunDate ?? '');
       setLastScheduledSlot(currentUser.lastScheduledSlot);
-      setArticles(getStoredArticles(currentUser.id));
+      setArticles(getStoredArticles(uid));
+
+      // Synchronize UID-specific local cache
+      if (currentUser.bookmarks) saveStoredBookmarks(currentUser.bookmarks, uid);
+      if (currentUser.notes) saveStoredMedicalNotes(currentUser.notes, uid);
+      if (currentUser.accessibility) saveStoredAccessibility(currentUser.accessibility, uid);
+      if (currentUser.workSchedules) saveStoredWorkSchedules(currentUser.workSchedules, uid);
     } else if (!currentUser) {
       // Clear/Reset all user-isolated workspace states immediately to prevent ANY leakage or transient data display
       setNotes([]);
@@ -880,7 +910,7 @@ export default function App() {
   // Update Notes
   const handleUpdateNotes = (newNotes: MedicalNote[]) => {
     setNotes(newNotes);
-    saveStoredMedicalNotes(newNotes);
+    saveStoredMedicalNotes(newNotes, currentUser?.id || undefined);
     if (currentUser?.id) {
       const updatedUser = { ...currentUser, notes: newNotes, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
@@ -912,6 +942,19 @@ export default function App() {
     handleUpdateNotes(notes.map((n) => (n.id === id ? { ...n, text: newText } : n)));
   };
 
+  // Work Schedules (Calendar)
+  const handleUpdateWorkSchedules = (newSchedules: Record<string, WorkDaySchedule>) => {
+    setWorkSchedules(newSchedules);
+    saveStoredWorkSchedules(newSchedules, currentUser?.id || undefined);
+    if (currentUser?.id) {
+      const updatedUser = { ...currentUser, workSchedules: newSchedules, updatedAt: new Date().toISOString() };
+      const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
+      setProfiles(nextProfiles);
+      saveStoredProfiles(nextProfiles);
+      syncUserProfileToServer(updatedUser);
+    }
+  };
+
   // Personal Timers
   const handleUpdateTimers = (newTimers: MedicalTimerItem[]) => {
     setTimers(newTimers);
@@ -928,7 +971,7 @@ export default function App() {
   // Personal Accessibility
   const handleUpdateAccessibility = (newCfg: AccessibilityConfig) => {
     setAccessibility(newCfg);
-    saveStoredAccessibility(newCfg);
+    saveStoredAccessibility(newCfg, currentUser?.id || undefined);
     if (currentUser?.id) {
       const updatedUser = { ...currentUser, accessibility: newCfg, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
@@ -974,7 +1017,7 @@ export default function App() {
   // Bookmarks Quick Launcher Handlers
   const handleUpdateBookmarks = (newBookmarks: DesktopBookmark[]) => {
     setBookmarks(newBookmarks);
-    saveStoredBookmarks(newBookmarks);
+    saveStoredBookmarks(newBookmarks, currentUser?.id || undefined);
     if (currentUser?.id) {
       const updatedUser = { ...currentUser, bookmarks: newBookmarks, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map((p) => (p.id === currentUser.id ? updatedUser : p));
@@ -998,13 +1041,21 @@ export default function App() {
     if (updates.feeds !== undefined) {
       setFeeds(updates.feeds);
     }
+    if (updates.bookmarks !== undefined) {
+      setBookmarks(updates.bookmarks);
+      saveStoredBookmarks(updates.bookmarks, currentUser.id);
+    }
+    if (updates.notes !== undefined) {
+      setNotes(updates.notes);
+      saveStoredMedicalNotes(updates.notes, currentUser.id);
+    }
     if (updates.timers !== undefined) {
       setTimers(updates.timers);
       saveStoredMedicalTimers(updates.timers, currentUser.id);
     }
     if (updates.accessibility !== undefined) {
       setAccessibility(updates.accessibility);
-      saveStoredAccessibility(updates.accessibility);
+      saveStoredAccessibility(updates.accessibility, currentUser.id);
     }
     if (updates.customAiPrompt !== undefined) {
       setCustomAiPrompt(updates.customAiPrompt);
@@ -1084,7 +1135,8 @@ export default function App() {
       saveActiveSessionUserId(target.id);
       setNotes(target.notes ?? []);
       setTimers(target.timers ?? INITIAL_MEDICAL_TIMERS);
-      setFeeds(target.feeds ?? ENGINEER_DEFAULT_FEEDS);
+      setBookmarks(Array.isArray(target.bookmarks) ? target.bookmarks : INITIAL_BOOKMARKS);
+      setFeeds(Array.isArray(target.feeds) ? target.feeds : ENGINEER_DEFAULT_FEEDS);
       setWorkSchedules(target.workSchedules ?? {});
       setAccessibility(target.accessibility ?? { scalePercent: 100, visualAcuity: 'Не указывать' });
       setAppStyle(target.appStyle ?? 'engineer');
@@ -1146,7 +1198,8 @@ export default function App() {
         saveActiveSessionUserId(active.id);
         setNotes(active.notes || []);
         setTimers(active.timers || []);
-        setFeeds(active.feeds || ENGINEER_DEFAULT_FEEDS);
+        setBookmarks(Array.isArray(active.bookmarks) ? active.bookmarks : INITIAL_BOOKMARKS);
+        setFeeds(Array.isArray(active.feeds) ? active.feeds : ENGINEER_DEFAULT_FEEDS);
         setWorkSchedules(active.workSchedules || {});
         setAccessibility(active.accessibility || { scalePercent: 100, visualAcuity: 'Не указывать' });
         setAppStyle(active.appStyle || 'engineer');
@@ -1284,14 +1337,7 @@ export default function App() {
           timers={timers}
           onUpdateTimers={handleUpdateTimers}
           workSchedules={workSchedules}
-          onUpdateWorkSchedules={(updated) => {
-            setWorkSchedules(updated);
-            const updatedUser = { ...currentUser, workSchedules: updated, updatedAt: new Date().toISOString() };
-            const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
-            setProfiles(nextProfiles);
-            saveStoredProfiles(nextProfiles);
-            syncUserProfileToServer(updatedUser);
-          }}
+          onUpdateWorkSchedules={handleUpdateWorkSchedules}
           bookmarks={bookmarks}
           onUpdateBookmarks={handleUpdateBookmarks}
           onOpenSettingsTab={(tab) => {
@@ -1300,6 +1346,7 @@ export default function App() {
           }}
           appStyle={appStyle}
           onPlaySound={playUiSound}
+          currentUserId={currentUser?.id}
         />
 
         {/* Right Side: Tab View (ЗАМЕТКИ or НОВОСТИ) */}

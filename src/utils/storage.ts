@@ -210,6 +210,7 @@ const STORAGE_NOTES_KEY = 'belkindesk_med_notes_v2';
 const STORAGE_TIMERS_KEY = 'belkindesk_med_timers_v2';
 const STORAGE_ACCESSIBILITY_KEY = 'belkindesk_med_accessibility_v2';
 const STORAGE_BOOKMARKS_KEY = 'belkindesk_bottom_bookmarks_v2';
+const STORAGE_WORKSCHEDULES_KEY = 'belkindesk_calendar_workschedules_v2';
 
 const isDevMode = typeof window !== 'undefined' && (
   window.location.hostname === 'localhost' ||
@@ -272,6 +273,9 @@ export function saveStoredAccessibility(cfg: AccessibilityConfig, userId?: strin
     if (!cfg || typeof cfg !== 'object') return;
     const key = userId ? `${STORAGE_ACCESSIBILITY_KEY}_${userId}` : STORAGE_ACCESSIBILITY_KEY;
     localStorage.setItem(key, JSON.stringify(cfg));
+    if (userId) {
+      localStorage.removeItem(STORAGE_ACCESSIBILITY_KEY);
+    }
   } catch {}
 }
 
@@ -279,21 +283,22 @@ export function getStoredMedicalNotes(userId?: string): MedicalNote[] {
   try {
     const key = userId ? `${STORAGE_NOTES_KEY}_${userId}` : STORAGE_NOTES_KEY;
     const raw = localStorage.getItem(key);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         return parsed
           .filter((n) => n && typeof n === 'object' && typeof n.text === 'string')
           .map((n, i) => ({
+            ...n,
             id: String(n.id || `note-${Date.now()}-${i}`),
             text: String(n.text || ''),
             createdAt: String(n.createdAt || new Date().toISOString()),
-            timestampStr: String(n.timestampStr || '2026-06-25 19:32'),
+            timestampStr: String(n.timestampStr || ''),
           }));
       }
     }
   } catch {}
-  return INITIAL_MEDICAL_NOTES;
+  return userId ? [] : INITIAL_MEDICAL_NOTES;
 }
 
 export function saveStoredMedicalNotes(notes: MedicalNote[], userId?: string) {
@@ -308,17 +313,17 @@ export function getStoredMedicalTimers(userId?: string): MedicalTimerItem[] {
   try {
     const key = userId ? `${STORAGE_TIMERS_KEY}_${userId}` : STORAGE_TIMERS_KEY;
     const raw = localStorage.getItem(key);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         return parsed
           .filter((t) => t && typeof t === 'object')
           .map((t, i) => ({
+            ...t,
             id: String(t.id || `timer-${i}`),
             name: String(t.name || 'Таймер'),
             targetTime: String(t.targetTime || '12:00'),
-            status: t.status === 'done' ? 'done' : 'active',
-            countdownSeconds: typeof t.countdownSeconds === 'number' ? Math.max(0, t.countdownSeconds) : 3600,
+            status: t.status === 'done' ? 'done' : (t.status === 'pending' ? 'pending' : 'active'),
             isEndShift: Boolean(t.isEndShift),
           }));
       }
@@ -332,6 +337,28 @@ export function saveStoredMedicalTimers(timers: MedicalTimerItem[], userId?: str
     if (!Array.isArray(timers)) return;
     const key = userId ? `${STORAGE_TIMERS_KEY}_${userId}` : STORAGE_TIMERS_KEY;
     localStorage.setItem(key, JSON.stringify(timers));
+  } catch {}
+}
+
+export function getStoredWorkSchedules(userId?: string): Record<string, WorkDaySchedule> {
+  try {
+    const key = userId ? `${STORAGE_WORKSCHEDULES_KEY}_${userId}` : STORAGE_WORKSCHEDULES_KEY;
+    const raw = localStorage.getItem(key);
+    if (raw !== null) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return userId ? {} : getInitialWorkSchedules();
+}
+
+export function saveStoredWorkSchedules(schedules: Record<string, WorkDaySchedule>, userId?: string) {
+  try {
+    if (!schedules || typeof schedules !== 'object') return;
+    const key = userId ? `${STORAGE_WORKSCHEDULES_KEY}_${userId}` : STORAGE_WORKSCHEDULES_KEY;
+    localStorage.setItem(key, JSON.stringify(schedules));
   } catch {}
 }
 
@@ -511,7 +538,7 @@ export function sanitizeProfiles(parsed: UserProfile[]): UserProfile[] {
       // Preserve user feeds and settings carefully!
       const userFeeds = Array.isArray(p.feeds) ? p.feeds : ENGINEER_DEFAULT_FEEDS;
       const style = p.appStyle || 'engineer';
-      const aiPrompt = p.customAiPrompt || DEFAULT_AI_PROMPTS[style] || DEFAULT_AI_PROMPTS.engineer;
+      const aiPrompt = p.customAiPrompt !== undefined ? p.customAiPrompt : (DEFAULT_AI_PROMPTS[style] || DEFAULT_AI_PROMPTS.engineer);
 
       // CRITICAL SECURITY RULE: Only explicitly designated dev/demo profiles in Dev Mode retain a password!
       const isExplicitDemoProfile = p.id === 'user-admin-belkin' || p.id.startsWith('agent-');
@@ -527,10 +554,16 @@ export function sanitizeProfiles(parsed: UserProfile[]): UserProfile[] {
         feeds: userFeeds,
         appStyle: style,
         customAiPrompt: aiPrompt,
-        notes: Array.isArray(p.notes) ? p.notes : INITIAL_MEDICAL_NOTES,
+        customWallpaper: p.customWallpaper ?? '',
+        scheduledHours: Array.isArray(p.scheduledHours) ? p.scheduledHours : [6, 12, 19],
+        workspaceConfig: p.workspaceConfig ? { ...DEFAULT_WORKSPACE_CONFIG, ...p.workspaceConfig } : { ...DEFAULT_WORKSPACE_CONFIG },
+        aiProvider: p.aiProvider || 'gemini',
+        aiApiKey: p.aiApiKey ?? '',
+        aiModel: p.aiModel ?? '',
+        aiUrl: p.aiUrl ?? '',
+        notes: Array.isArray(p.notes) ? p.notes : (p.id && p.id !== 'user-admin-belkin' && !p.id.startsWith('agent-') ? [] : INITIAL_MEDICAL_NOTES),
         timers: Array.isArray(p.timers) ? p.timers : INITIAL_MEDICAL_TIMERS,
         bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks : INITIAL_BOOKMARKS,
-        scheduledHours: Array.isArray(p.scheduledHours) ? p.scheduledHours : [6, 12, 19],
         workSchedules: p.workSchedules || {},
         accessibility: p.accessibility || INITIAL_ACCESSIBILITY,
         starredArticleIds: Array.isArray(p.starredArticleIds) ? p.starredArticleIds : [],
@@ -793,15 +826,29 @@ export function saveAISettings(
   currentUser: UserProfile | null,
   updateProfileCallback?: (profile: UserProfile) => void
 ) {
-  // 1. Save to localStorage
-  localStorage.setItem('belkin_user_ai_provider', provider);
+  const uid = currentUser?.id;
+  const providerKey = uid ? `belkin_user_ai_provider_${uid}` : 'belkin_user_ai_provider';
+  const apiKey = uid ? `belkin_user_ai_key_${uid}` : 'belkin_user_ai_key';
+  const modelKey = uid ? `belkin_user_ai_model_${uid}` : 'belkin_user_ai_model';
+  const urlKey = uid ? `belkin_user_ai_url_${uid}` : 'belkin_user_ai_url';
+
+  // 1. Save to UID-isolated localStorage
+  localStorage.setItem(providerKey, provider);
   if (key.trim()) {
-    localStorage.setItem('belkin_user_ai_key', key.trim());
+    localStorage.setItem(apiKey, key.trim());
   } else {
-    localStorage.removeItem('belkin_user_ai_key');
+    localStorage.removeItem(apiKey);
   }
-  localStorage.setItem('belkin_user_ai_model', model.trim());
-  localStorage.setItem('belkin_user_ai_url', url.trim());
+  localStorage.setItem(modelKey, model.trim());
+  localStorage.setItem(urlKey, url.trim());
+
+  // Clean up legacy non-UID global keys when logged in
+  if (uid) {
+    localStorage.removeItem('belkin_user_ai_provider');
+    localStorage.removeItem('belkin_user_ai_key');
+    localStorage.removeItem('belkin_user_ai_model');
+    localStorage.removeItem('belkin_user_ai_url');
+  }
 
   // 2. Sync to UserProfile if available
   if (currentUser && updateProfileCallback) {

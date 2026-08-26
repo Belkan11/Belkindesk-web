@@ -23,18 +23,11 @@ import {
   Lock,
   Unlock
 } from 'lucide-react';
-import { MedicalTimerItem, WorkDaySchedule, DesktopBookmark, AppArchetypeStyle } from '../types';
+import { MedicalTimerItem, WorkDaySchedule, DesktopBookmark, AppArchetypeStyle, DayEntryItem } from '../types';
 import { WeatherWidget } from './WeatherWidget';
 import { useCityClock, calculateTimerState, parseTargetTimeToSeconds } from '../utils/timeZone';
 import { BottomBookmarksSettingsModal } from './BottomBookmarksSettingsModal';
 import { INITIAL_BOOKMARKS } from '../utils/storage';
-
-interface DayEntryItem {
-  id: string;
-  text: string;
-  time?: string;
-  isDone?: boolean;
-}
 
 interface MedicalLeftPanelProps {
   timers: MedicalTimerItem[];
@@ -45,10 +38,11 @@ interface MedicalLeftPanelProps {
   onUpdateBookmarks?: (bookmarks: DesktopBookmark[]) => void;
   appStyle?: AppArchetypeStyle;
   onOpenSettingsTab?: (tabName: string) => void;
-  onPlaySound?: (type: 'click' | 'success' | 'star') => void;
+  onPlaySound?: (type: 'click' | 'success' | 'star' | 'chime' | 'bell' | 'alert' | string) => void;
+  currentUserId?: string;
 }
 
-const STORAGE_DAY_ENTRIES_KEY = 'belkindesk_calendar_day_entries';
+const STORAGE_DAY_ENTRIES_KEY = 'belkindesk_calendar_day_entries_v2';
 
 const MONTH_NAMES_RU = [
   'ЯНВАРЬ',
@@ -105,6 +99,7 @@ export const MedicalLeftPanel: React.FC<MedicalLeftPanelProps> = ({
   appStyle = 'classic',
   onOpenSettingsTab,
   onPlaySound,
+  currentUserId,
 }) => {
   const cityClock = useCityClock();
   const isModern = appStyle === 'modern';
@@ -122,7 +117,9 @@ export const MedicalLeftPanel: React.FC<MedicalLeftPanelProps> = ({
       const targetSec = parseTargetTimeToSeconds(t.targetTime);
       if (curSec === targetSec && !alertedTimersRef.current.has(t.id)) {
         alertedTimersRef.current.add(t.id);
-        onPlaySound?.('success');
+        if (!t.isMuted) {
+          onPlaySound?.(t.soundId || 'success');
+        }
       }
     });
   }, [cityClock.hours, cityClock.minutes, cityClock.seconds, timers, onPlaySound]);
@@ -215,23 +212,65 @@ export const MedicalLeftPanel: React.FC<MedicalLeftPanelProps> = ({
   const [editText, setEditText] = useState<string>('');
   const [editTime, setEditTime] = useState<string>('');
 
-  // Daily entries store
+  // Daily entries store with UID-specific cache
   const [dayEntries, setDayEntries] = useState<Record<string, DayEntryItem[]>>(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_DAY_ENTRIES_KEY);
+      const key = currentUserId ? `${STORAGE_DAY_ENTRIES_KEY}_${currentUserId}` : STORAGE_DAY_ENTRIES_KEY;
+      const raw = localStorage.getItem(key);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') return parsed;
       }
     } catch {}
-    return DEFAULT_INITIAL_ENTRIES;
+    return currentUserId ? {} : DEFAULT_INITIAL_ENTRIES;
   });
+
+  // Extract entries from workSchedules loaded from Firestore
+  useEffect(() => {
+    if (workSchedules && typeof workSchedules === 'object') {
+      const extractedEntries: Record<string, DayEntryItem[]> = {};
+      let found = false;
+      Object.entries(workSchedules).forEach(([dateStr, sched]) => {
+        const scheduleObj = sched as WorkDaySchedule;
+        if (Array.isArray(scheduleObj?.entries)) {
+          extractedEntries[dateStr] = scheduleObj.entries;
+          found = true;
+        }
+      });
+      if (found) {
+        setDayEntries((prev) => {
+          const merged = { ...prev, ...extractedEntries };
+          const key = currentUserId ? `${STORAGE_DAY_ENTRIES_KEY}_${currentUserId}` : STORAGE_DAY_ENTRIES_KEY;
+          try {
+            localStorage.setItem(key, JSON.stringify(merged));
+          } catch {}
+          return merged;
+        });
+      }
+    }
+  }, [workSchedules, currentUserId]);
 
   const saveDayEntries = (entries: Record<string, DayEntryItem[]>) => {
     setDayEntries(entries);
+    const key = currentUserId ? `${STORAGE_DAY_ENTRIES_KEY}_${currentUserId}` : STORAGE_DAY_ENTRIES_KEY;
     try {
-      localStorage.setItem(STORAGE_DAY_ENTRIES_KEY, JSON.stringify(entries));
+      localStorage.setItem(key, JSON.stringify(entries));
     } catch {}
+
+    // Sync entries into workSchedules so they persist in Firestore!
+    const updatedWorkSchedules: Record<string, WorkDaySchedule> = { ...workSchedules };
+    Object.keys(entries).forEach((dateStr) => {
+      const existing = updatedWorkSchedules[dateStr] || {
+        date: dateStr,
+        shiftType: 'work-office',
+        notes: 'Рабочий день',
+      };
+      updatedWorkSchedules[dateStr] = {
+        ...existing,
+        entries: entries[dateStr],
+      };
+    });
+    onUpdateWorkSchedules(updatedWorkSchedules);
   };
 
   // Month navigation

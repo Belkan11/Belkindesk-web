@@ -27,8 +27,10 @@ import {
   QrCode,
   MapPin,
   Globe,
-  Compass
-, Database } from 'lucide-react';
+  Compass,
+  Volume2,
+  VolumeX,
+  Database } from 'lucide-react';
 import { FeedConfig, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle, UserProfile } from '../types';
 import { MEDICAL_FEEDS, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS, CURATED_FEED_PRESETS } from '../data/curatedFeeds';
 import { INITIAL_MEDICAL_TIMERS, saveAISettings } from '../utils/storage';
@@ -69,7 +71,7 @@ interface ControlCenterModalProps {
   
   onTriggerRefresh?: (overrideFeeds?: FeedConfig[]) => void;
   isRefreshing?: boolean;
-  onPlaySound?: (type: 'click' | 'success' | 'star') => void;
+  onPlaySound?: (type: 'click' | 'success' | 'star' | 'chime' | 'bell' | 'alert' | string) => void;
   currentUser?: UserProfile;
   onUpdateUserDetails?: (profile: UserProfile) => void;
   onSaveAllWorkspaceSettings?: (updates: Partial<UserProfile>) => void;
@@ -120,20 +122,34 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   const [feedHashtagsText, setFeedHashtagsText] = useState<string>('');
 
   // AI Prompt local state
+  const getAiVal = (field: 'provider' | 'key' | 'model' | 'url') => {
+    if (currentUser) {
+      if (field === 'provider') return currentUser.aiProvider || localStorage.getItem(`belkin_user_ai_provider_${currentUser.id}`) || 'gemini';
+      if (field === 'key') return currentUser.aiApiKey !== undefined ? currentUser.aiApiKey : (localStorage.getItem(`belkin_user_ai_key_${currentUser.id}`) || '');
+      if (field === 'model') return currentUser.aiModel !== undefined ? currentUser.aiModel : (localStorage.getItem(`belkin_user_ai_model_${currentUser.id}`) || '');
+      if (field === 'url') return currentUser.aiUrl !== undefined ? currentUser.aiUrl : (localStorage.getItem(`belkin_user_ai_url_${currentUser.id}`) || '');
+    }
+    if (field === 'provider') return localStorage.getItem('belkin_user_ai_provider') || 'gemini';
+    if (field === 'key') return localStorage.getItem('belkin_user_ai_key') || '';
+    if (field === 'model') return localStorage.getItem('belkin_user_ai_model') || '';
+    if (field === 'url') return localStorage.getItem('belkin_user_ai_url') || '';
+    return '';
+  };
+
   const [localPrompt, setLocalPrompt] = useState<string>(customAiPrompt || DEFAULT_AI_PROMPTS.engineer);
-  const [localProvider, setLocalProvider] = useState(() => localStorage.getItem('belkin_user_ai_provider') || 'gemini');
-  const [localKey, setLocalKey] = useState(() => localStorage.getItem('belkin_user_ai_key') || '');
-  const [localModel, setLocalModel] = useState(() => localStorage.getItem('belkin_user_ai_model') || '');
-  const [localUrl, setLocalUrl] = useState(() => localStorage.getItem('belkin_user_ai_url') || '');
+  const [localProvider, setLocalProvider] = useState(() => getAiVal('provider') || 'gemini');
+  const [localKey, setLocalKey] = useState(() => getAiVal('key'));
+  const [localModel, setLocalModel] = useState(() => getAiVal('model'));
+  const [localUrl, setLocalUrl] = useState(() => getAiVal('url'));
 
   useEffect(() => {
     if (isOpen) {
-      setLocalProvider(localStorage.getItem('belkin_user_ai_provider') || 'gemini');
-      setLocalKey(localStorage.getItem('belkin_user_ai_key') || '');
-      setLocalModel(localStorage.getItem('belkin_user_ai_model') || '');
-      setLocalUrl(localStorage.getItem('belkin_user_ai_url') || '');
+      setLocalProvider(getAiVal('provider') || 'gemini');
+      setLocalKey(getAiVal('key'));
+      setLocalModel(getAiVal('model'));
+      setLocalUrl(getAiVal('url'));
     }
-  }, [isOpen]);
+  }, [isOpen, currentUser]);
 
   
   // Style and Wallpaper local state
@@ -238,14 +254,32 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
       localStorage.setItem('belkin_weather_city', localCity);
       localStorage.setItem('belkin_weather_tz', localTimeZone);
 
-      localStorage.setItem('belkin_user_ai_provider', localProvider);
-      if (localKey.trim()) {
-        localStorage.setItem('belkin_user_ai_key', localKey.trim());
-      } else {
+      const uid = currentUser?.id;
+      if (uid) {
+        localStorage.setItem(`belkin_user_ai_provider_${uid}`, localProvider);
+        if (localKey.trim()) {
+          localStorage.setItem(`belkin_user_ai_key_${uid}`, localKey.trim());
+        } else {
+          localStorage.removeItem(`belkin_user_ai_key_${uid}`);
+        }
+        localStorage.setItem(`belkin_user_ai_model_${uid}`, localModel.trim());
+        localStorage.setItem(`belkin_user_ai_url_${uid}`, localUrl.trim());
+
+        // Remove legacy global keys so no other user on this browser sees them
+        localStorage.removeItem('belkin_user_ai_provider');
         localStorage.removeItem('belkin_user_ai_key');
+        localStorage.removeItem('belkin_user_ai_model');
+        localStorage.removeItem('belkin_user_ai_url');
+      } else {
+        localStorage.setItem('belkin_user_ai_provider', localProvider);
+        if (localKey.trim()) {
+          localStorage.setItem('belkin_user_ai_key', localKey.trim());
+        } else {
+          localStorage.removeItem('belkin_user_ai_key');
+        }
+        localStorage.setItem('belkin_user_ai_model', localModel.trim());
+        localStorage.setItem('belkin_user_ai_url', localUrl.trim());
       }
-      localStorage.setItem('belkin_user_ai_model', localModel.trim());
-      localStorage.setItem('belkin_user_ai_url', localUrl.trim());
 
       // 2. Prepare the consolidated updates object
       const updates: Partial<UserProfile> = {
@@ -1146,49 +1180,122 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
                     return (
                       <div
                         key={t.id}
-                        className="p-2 bg-[#09111c] border border-[#1e3a5f] rounded flex items-center justify-between gap-2.5"
+                        className="p-2.5 bg-[#09111c] border border-[#1e3a5f] rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2"
                       >
-                        <input
-                          type="text"
-                          maxLength={60}
-                          value={t.name}
-                          onChange={(e) => {
-                            const updated = [...localTimers];
-                            updated[idx].name = e.target.value || 'Таймер';
-                            setLocalTimers(updated);
-                          }}
-                          className="bg-[#05080c] border border-[#1e3a5f] rounded px-2.5 py-1 text-slate-200 text-xs flex-1"
-                        />
-                        <input
-                          type="time"
-                          value={t.targetTime}
-                          onChange={(e) => {
-                            const updated = [...localTimers];
-                            updated[idx].targetTime = e.target.value || '12:00';
-                            setLocalTimers(updated);
-                          }}
-                          className="bg-[#05080c] border border-[#1e3a5f] rounded px-2 py-1 text-[#38bdf8] font-bold text-xs w-22 shrink-0 text-center"
-                        />
-                        <div className="w-20 text-right font-mono text-[11px] shrink-0">
-                          {isDone ? (
-                            <span className="text-slate-500 font-bold">✓ Прошло</span>
-                          ) : (
-                            <span className="text-[#38bdf8] font-bold tabular-nums">
-                              {previewState.formattedCountdown}
-                            </span>
-                          )}
+                        <div className="flex items-center gap-2 flex-1">
+                          <input
+                            type="text"
+                            maxLength={60}
+                            value={t.name}
+                            onChange={(e) => {
+                              const updated = [...localTimers];
+                              updated[idx].name = e.target.value || 'Таймер';
+                              setLocalTimers(updated);
+                            }}
+                            className="bg-[#05080c] border border-[#1e3a5f] rounded px-2.5 py-1 text-slate-200 text-xs flex-1"
+                            placeholder="Название таймера"
+                          />
+                          <input
+                            type="time"
+                            value={t.targetTime}
+                            onChange={(e) => {
+                              const updated = [...localTimers];
+                              updated[idx].targetTime = e.target.value || '12:00';
+                              setLocalTimers(updated);
+                            }}
+                            className="bg-[#05080c] border border-[#1e3a5f] rounded px-2 py-1 text-[#38bdf8] font-bold text-xs w-22 shrink-0 text-center"
+                          />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setLocalTimers(localTimers.filter((_, i) => i !== idx));
-                            onPlaySound?.('click');
-                          }}
-                          className="text-slate-500 hover:text-red-400 p-1 cursor-pointer shrink-0"
-                          title="Удалить таймер"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {/* Sound Selector & Preview */}
+                          <select
+                            value={t.soundId || 'success'}
+                            onChange={(e) => {
+                              const updated = [...localTimers];
+                              updated[idx].soundId = e.target.value;
+                              setLocalTimers(updated);
+                              onPlaySound?.(e.target.value);
+                            }}
+                            className="bg-[#05080c] border border-[#1e3a5f] rounded px-2 py-1 text-slate-300 text-[11px]"
+                            title="Звуковой сигнал"
+                          >
+                            <option value="success">🔔 Сигнал 1 (Стандарт)</option>
+                            <option value="chime">🎼 Перезвон</option>
+                            <option value="bell">🔔 Колокол</option>
+                            <option value="alert">🚨 Сирена</option>
+                            <option value="star">✨ Арпеджио</option>
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onPlaySound?.(t.soundId || 'success');
+                            }}
+                            className="p-1 text-[#38bdf8] hover:bg-[#132338] rounded cursor-pointer"
+                            title="Прослушать звук"
+                          >
+                            <Volume2 className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Mute Toggle */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = [...localTimers];
+                              updated[idx].isMuted = !t.isMuted;
+                              setLocalTimers(updated);
+                              onPlaySound?.('click');
+                            }}
+                            className={`p-1 rounded cursor-pointer ${
+                              t.isMuted ? 'text-rose-400 bg-rose-500/10' : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                            title={t.isMuted ? 'Звук отключен (Mute)' : 'Звук включен'}
+                          >
+                            {t.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 opacity-60" />}
+                          </button>
+
+                          {/* Repeat Mode */}
+                          <select
+                            value={t.repeatMode || 'daily'}
+                            onChange={(e) => {
+                              const updated = [...localTimers];
+                              updated[idx].repeatMode = e.target.value as any;
+                              setLocalTimers(updated);
+                              onPlaySound?.('click');
+                            }}
+                            className="bg-[#05080c] border border-[#1e3a5f] rounded px-1.5 py-1 text-slate-300 text-[11px]"
+                            title="Повтор"
+                          >
+                            <option value="daily">🔄 Каждый день</option>
+                            <option value="weekdays">📅 По будням</option>
+                            <option value="none">1️⃣ Однократно</option>
+                          </select>
+
+                          {/* Countdown preview / Status */}
+                          <div className="w-16 text-right font-mono text-[11px]">
+                            {isDone ? (
+                              <span className="text-slate-500 font-bold">✓ Прошло</span>
+                            ) : (
+                              <span className="text-[#38bdf8] font-bold tabular-nums">
+                                {previewState.formattedCountdown}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Delete */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLocalTimers(localTimers.filter((_, i) => i !== idx));
+                              onPlaySound?.('click');
+                            }}
+                            className="text-slate-500 hover:text-red-400 p-1 cursor-pointer"
+                            title="Удалить таймер"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}

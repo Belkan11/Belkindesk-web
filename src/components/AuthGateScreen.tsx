@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS } from '../data/curatedFeeds';
+import { INITIAL_BOOKMARKS } from '../utils/storage';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth, saveUserProfileToFirestore } from '../utils/firebase';
 
@@ -214,6 +215,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
         notes: [],
         timers: [],
         feeds: [...ENGINEER_DEFAULT_FEEDS],
+        bookmarks: [...INITIAL_BOOKMARKS],
         workSchedules: {},
         accessibility: { scalePercent: 100, visualAcuity: 'Не указывать' },
         appStyle: 'engineer',
@@ -262,6 +264,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
           notes: [],
           timers: [],
           feeds: [...ENGINEER_DEFAULT_FEEDS],
+          bookmarks: [...INITIAL_BOOKMARKS],
           workSchedules: {},
           accessibility: { scalePercent: 100, visualAcuity: 'Не указывать' },
           appStyle: 'engineer',
