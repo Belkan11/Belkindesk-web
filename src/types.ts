@@ -19,6 +19,12 @@ export interface MedicalTimerItem {
   isMuted?: boolean;
   vibration?: boolean;
   notifications?: boolean;
+
+  // Tombstone & sync fields
+  deleted?: boolean;
+  deletedAt?: string;
+  updatedAt?: string;
+  version?: number;
 }
 
 export interface MedicalNote {
@@ -32,6 +38,12 @@ export interface MedicalNote {
   isPinned?: boolean;
   isFavorite?: boolean;
   tags?: string[];
+
+  // Tombstone & sync fields
+  deleted?: boolean;
+  deletedAt?: string;
+  updatedAt?: string;
+  version?: number;
   [key: string]: any;
 }
 
@@ -107,6 +119,11 @@ export interface Article {
   firstSeenAt?: string;
   lastSeenAt?: string;
   updatedAt?: string;
+
+  // Tombstone & sync fields
+  deleted?: boolean;
+  deletedAt?: string;
+  version?: number;
 }
 
 export interface NewsCard {
@@ -129,6 +146,11 @@ export interface NewsCard {
   savedLater?: boolean;
   userNote?: string;
   updatedAt: string;
+
+  // Tombstone & sync fields
+  deleted?: boolean;
+  deletedAt?: string;
+  version?: number;
 
   // Optional compatibility fields with Article
   imageUrls?: string[];
@@ -205,6 +227,12 @@ export interface FeedConfig {
   errorMessage?: string;
   itemCount?: number;
   unreadCount?: number;
+
+  // Tombstone & sync fields
+  deleted?: boolean;
+  deletedAt?: string;
+  updatedAt?: string;
+  version?: number;
 }
 
 // Deprecated old FeedSource, keep for backward compatibility or remove if fully refactored
@@ -241,6 +269,12 @@ export interface DesktopBookmark {
   isPinned?: boolean;
   clickCount?: number;
   description?: string;
+
+  // Tombstone & sync fields
+  deleted?: boolean;
+  deletedAt?: string;
+  updatedAt?: string;
+  version?: number;
 }
 
 export type DayShiftType = 'work-office' | 'work-remote' | 'day-off' | 'vacation' | 'sick-leave' | 'duty' | 'event' | string;
@@ -264,6 +298,12 @@ export interface WorkDaySchedule {
   color?: string;
   category?: string;
   entries?: DayEntryItem[];
+
+  // Tombstone & sync fields
+  deleted?: boolean;
+  deletedAt?: string;
+  updatedAt?: string;
+  version?: number;
   [key: string]: any;
 }
 
@@ -371,6 +411,7 @@ export interface UserProfile {
   aiApiKey?: string;
   aiModel?: string;
   aiUrl?: string;
+  version?: number;
   updatedAt?: string;
 }
 
@@ -412,3 +453,29 @@ export interface CuratedCategoryPreset {
     tags: string[];
   }[];
 }
+
+export type PendingEntityType =
+  | 'feeds'
+  | 'bookmarks'
+  | 'timers'
+  | 'notes'
+  | 'workSchedules'
+  | 'workspaceConfig'
+  | 'aiSettings'
+  | 'newsCards'
+  | 'userProfile';
+
+export interface PendingOperation {
+  id: string;
+  userId: string;
+  entityType: PendingEntityType;
+  entityId?: string;
+  operation: 'create' | 'update' | 'delete';
+  payload: any;
+  baseUpdatedAt?: string;
+  localUpdatedAt: string;
+  createdAt: string;
+  retryCount: number;
+  status?: 'pending' | 'failed_retryable';
+}
+

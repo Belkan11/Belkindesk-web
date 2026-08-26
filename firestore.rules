@@ -13,33 +13,29 @@ service cloud.firestore {
     // User profile, notes, timers, schedules, feeds, and personal workspace data
     // Fully persistent across all deployments and server restarts
     match /users/{userId} {
-      // Only authenticated users can read profiles
-      allow read: if request.auth != null;
+      // Strictly isolated to document owner or admin
+      allow read, write: if request.auth != null && (request.auth.uid == userId || isAdmin());
       
-      // Users can write only to their own document, admins can write to any document
-      allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
-      
-      // Personal news cards collection strictly isolated to document owner
+      // Personal news cards collection strictly isolated to document owner or admin
       match /newsCards/{cardId} {
         allow read, write: if request.auth != null && (request.auth.uid == userId || isAdmin());
       }
 
-      // Subcollections or nested user data
+      // Subcollections or nested user data strictly isolated to document owner or admin
       match /{allSubcollections=**} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
+        allow read, write: if request.auth != null && (request.auth.uid == userId || isAdmin());
       }
     }
 
     // System configurations, curated feed registries, and app state
     match /system/{document=**} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if isAdmin();
     }
 
     // Backup snapshots
     match /backups/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isAdmin();
     }
   }
 }

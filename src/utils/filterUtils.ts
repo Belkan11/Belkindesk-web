@@ -1,3 +1,5 @@
+import { getStableCardId } from './newsCardsCloud';
+
 export function normalizeText(text?: string): string {
   if (!text) return '';
   return text.toLowerCase().replace(/[.,!?;:()[\]{}"']/g, ' ').replace(/\s+/g, ' ').trim();
@@ -118,7 +120,7 @@ export function deduplicateArticles(newArticles: any[], currentArticles: any[]):
     
     uniqueNewArticles.push({
       ...art,
-      id: art.id || `art_ref_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`
+      id: getStableCardId(art)
     });
   });
 

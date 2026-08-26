@@ -23,6 +23,15 @@ import {
 
 import firebaseConfig from '../../firebase-applet-config.json';
 import { UserProfile, MedicalNote, MedicalTimerItem, AccessibilityConfig } from '../types';
+import {
+  isRetryableError,
+  addPendingOperation,
+  categorizeAndQueuePartialFields,
+  flushPendingQueue,
+  resetRetryState,
+  mergeArrayById,
+  mergeWorkSchedulesLWW
+} from './pendingSync';
 
 // Initialize Firebase safely
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -81,7 +90,8 @@ export async function loadAllProfilesFromFirestore(): Promise<UserProfile[]> {
 }
 
 /**
- * Save / sync a single user profile directly to Cloud Firestore
+ * Save / sync a single user profile directly to Cloud Firestore.
+ * Performs non-destructive array/field merge if cloud version has newer updates.
  */
 export async function saveUserProfileToFirestore(user: UserProfile): Promise<void> {
   if (!user || !user.id) return;
@@ -111,13 +121,155 @@ export async function saveUserProfileToFirestore(user: UserProfile): Promise<voi
 
   try {
     const userDocRef = doc(db, 'users', user.id);
+    const snap = await getDoc(userDocRef);
+
     const payload = { ...user };
     delete payload.password; // CRITICAL: Strip plain text password before persisting to Firestore
-    payload.updatedAt = new Date().toISOString();
+
+    let nextVersion = (user.version || 0) + 1;
+    const nowIso = new Date().toISOString();
+    const localTime = user.updatedAt ? new Date(user.updatedAt).getTime() : 0;
+
+    if (snap.exists()) {
+      const cloudData = snap.data() as UserProfile;
+      const cloudTime = cloudData.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
+
+      if (cloudTime > localTime) {
+        console.warn(`[Firestore Concurrency Guard] Whole-profile save detected newer cloud document (${cloudData.updatedAt}) vs local (${user.updatedAt}). Performing non-destructive merge.`);
+
+        if (Array.isArray(cloudData.notes) && Array.isArray(payload.notes)) {
+          payload.notes = mergeArrayById(cloudData.notes, payload.notes);
+        }
+        if (Array.isArray(cloudData.bookmarks) && Array.isArray(payload.bookmarks)) {
+          payload.bookmarks = mergeArrayById(cloudData.bookmarks, payload.bookmarks);
+        }
+        if (Array.isArray(cloudData.timers) && Array.isArray(payload.timers)) {
+          payload.timers = mergeArrayById(cloudData.timers, payload.timers);
+        }
+        if (Array.isArray(cloudData.feeds) && Array.isArray(payload.feeds)) {
+          payload.feeds = mergeArrayById(cloudData.feeds, payload.feeds);
+        }
+        if (cloudData.workSchedules && payload.workSchedules) {
+          payload.workSchedules = { ...cloudData.workSchedules, ...payload.workSchedules };
+        }
+        if (cloudData.workspaceConfig && payload.workspaceConfig) {
+          payload.workspaceConfig = { ...cloudData.workspaceConfig, ...payload.workspaceConfig };
+        }
+      }
+      nextVersion = Math.max((cloudData.version || 0) + 1, nextVersion);
+    }
+
+    payload.version = nextVersion;
+    payload.updatedAt = nowIso;
+
     await setDoc(userDocRef, payload, { merge: true });
+    if (user.id) {
+      resetRetryState(user.id);
+      flushPendingQueue(user.id).catch(() => {});
+    }
   } catch (err) {
     logFirestoreError('SAVE_USER', `users/${user.id}`, err);
+    if (isRetryableError(err)) {
+      addPendingOperation({
+        userId: user.id,
+        entityType: 'userProfile',
+        operation: 'update',
+        payload: user,
+        baseUpdatedAt: user.updatedAt,
+        localUpdatedAt: new Date().toISOString(),
+      });
+    }
     throw err;
+  }
+}
+
+/**
+ * Granularly update specific fields of a UserProfile document in Cloud Firestore.
+ * Prevents stale overwrite of unrelated fields or newer cloud updates.
+ */
+export async function saveUserProfileFieldsToFirestore(
+  userId: string,
+  partialFields: Partial<UserProfile>,
+  lastKnownUpdatedAt?: string
+): Promise<boolean> {
+  if (!userId || !partialFields || Object.keys(partialFields).length === 0) return false;
+
+  const currentUser = auth.currentUser;
+  const isDevMode = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.includes('ais-dev')
+  );
+  const isDemoProfile = userId === 'user-admin-belkin' || userId.startsWith('agent-');
+
+  if (!isDevMode) {
+    if (!currentUser || currentUser.uid !== userId) {
+      console.warn(`[Firestore Guard] Blocked unauthorized save to /users/${userId}. Auth UID: ${currentUser?.uid}`);
+      return false;
+    }
+  } else {
+    if (!isDemoProfile && currentUser && currentUser.uid !== userId) {
+      console.warn(`[Firestore Guard Dev] Blocked save to /users/${userId}. Auth UID: ${currentUser?.uid}`);
+      return false;
+    }
+  }
+
+  try {
+    const userDocRef = doc(db, 'users', userId);
+    const snap = await getDoc(userDocRef);
+
+    const patchPayload: Record<string, any> = { ...partialFields };
+    delete patchPayload.password;
+
+    let nextVersion = 1;
+    const nowIso = new Date().toISOString();
+    const localTime = lastKnownUpdatedAt ? new Date(lastKnownUpdatedAt).getTime() : 0;
+
+    if (snap.exists()) {
+      const cloudData = snap.data() as UserProfile;
+      const cloudTime = cloudData.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
+      nextVersion = (cloudData.version || 0) + 1;
+
+      // Safe merge if cloud version is newer than the local baseline
+      if (cloudTime > localTime) {
+        console.warn(`[Firestore Concurrency Guard] Cloud profile /users/${userId} has newer updatedAt (${cloudData.updatedAt}) than local baseline (${lastKnownUpdatedAt}). Performing field-level safe merge.`);
+
+        if (partialFields.notes && Array.isArray(cloudData.notes)) {
+          patchPayload.notes = mergeArrayById(cloudData.notes, partialFields.notes);
+        }
+        if (partialFields.bookmarks && Array.isArray(cloudData.bookmarks)) {
+          patchPayload.bookmarks = mergeArrayById(cloudData.bookmarks, partialFields.bookmarks);
+        }
+        if (partialFields.timers && Array.isArray(cloudData.timers)) {
+          patchPayload.timers = mergeArrayById(cloudData.timers, partialFields.timers);
+        }
+        if (partialFields.feeds && Array.isArray(cloudData.feeds)) {
+          patchPayload.feeds = mergeArrayById(cloudData.feeds, partialFields.feeds);
+        }
+        if (partialFields.workSchedules && cloudData.workSchedules) {
+          patchPayload.workSchedules = mergeWorkSchedulesLWW(cloudData.workSchedules, partialFields.workSchedules);
+        }
+      }
+    }
+
+    patchPayload.version = nextVersion;
+    patchPayload.updatedAt = nowIso;
+
+    // Granular update: Only write patchPayload to Firestore (no whole-profile wipe of unrelated fields!)
+    await setDoc(userDocRef, patchPayload, { merge: true });
+
+    // Connection restored & write succeeded: trigger background flush of remaining queue if any
+    if (userId) {
+      resetRetryState(userId);
+      flushPendingQueue(userId).catch(() => {});
+    }
+    return true;
+  } catch (err) {
+    logFirestoreError('UPDATE_USER_FIELDS', `users/${userId}`, err);
+    if (isRetryableError(err)) {
+      categorizeAndQueuePartialFields(userId, partialFields, lastKnownUpdatedAt);
+    }
+    return false;
   }
 }
 

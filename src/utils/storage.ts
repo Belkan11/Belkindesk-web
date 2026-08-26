@@ -13,6 +13,7 @@ import {
 import { MEDICAL_FEEDS, INITIAL_MEDICAL_ARTICLES, ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS } from '../data/curatedFeeds';
 import { 
   saveUserProfileToFirestore, 
+  saveUserProfileFieldsToFirestore,
   deleteUserProfileFromFirestore, 
   loadAllProfilesFromFirestore,
   saveBackupSnapshotToFirestore
@@ -693,6 +694,41 @@ export function getTimestampMs(isoString: string | undefined | null): number {
   }
 }
 
+export async function syncUserProfileFieldsToServer(
+  userId: string,
+  fields: Partial<UserProfile>,
+  lastKnownUpdatedAt?: string
+) {
+  if (!userId || !fields || Object.keys(fields).length === 0) return;
+
+  const now = new Date().toISOString();
+
+  // Save back to local storage profiles cache
+  try {
+    const raw = localStorage.getItem(STORAGE_PROFILES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const idx = parsed.findIndex((p: any) => p && p.id === userId);
+        if (idx !== -1) {
+          const current = parsed[idx];
+          parsed[idx] = { ...current, ...fields, updatedAt: now, version: (current.version || 0) + 1 };
+          localStorage.setItem(STORAGE_PROFILES_KEY, JSON.stringify(parsed));
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to update local profile cache:', err);
+  }
+
+  // Direct Cloud Firestore granular save
+  try {
+    await saveUserProfileFieldsToFirestore(userId, fields, lastKnownUpdatedAt);
+  } catch (err) {
+    console.warn('Direct Firestore granular save note (cached locally):', err);
+  }
+}
+
 export async function syncUserProfileToServer(user: UserProfile) {
   if (!user || !user.id) return;
   
@@ -727,8 +763,8 @@ export async function syncUserProfileToServer(user: UserProfile) {
 }
 
 /**
- * Fetch profiles from Cloud Firestore and populate local cache.
- * Cloud Firestore is the primary Single Source of Truth.
+ * @deprecated Legacy function. Unused in production flow.
+ * In production, current authenticated Firebase UID is loaded individually.
  */
 export async function syncAllProfilesWithFirestore(): Promise<UserProfile[]> {
   const localProfiles = getStoredProfiles();

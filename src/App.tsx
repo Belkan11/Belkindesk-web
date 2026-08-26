@@ -36,7 +36,7 @@ import {
   DEFAULT_WORKSPACE_CONFIG,
   saveAISettings,
   syncUserProfileToServer,
-  syncAllProfilesWithFirestore,
+  syncUserProfileFieldsToServer,
   getStoredArticles,
   saveStoredArticles,
   getTimestampMs
@@ -44,7 +44,6 @@ import {
 import { 
   saveUserProfileToFirestore, 
   deleteUserProfileFromFirestore, 
-  saveBackupSnapshotToFirestore, 
   subscribeToAllProfiles,
   subscribeToUserProfile,
   loadUserDataFromFirestore
@@ -57,11 +56,13 @@ import {
   migrateLocalArticlesToFirestoreNewsCards, 
   saveNewsCardToFirestore, 
   saveNewsCardsBatchToFirestore,
+  deleteNewsCardFromFirestore,
   loadNewsCardsFromFirestore, 
   subscribeToNewsCardsFromFirestore,
   mergeCloudAndRssArticles,
   getStableCardId 
 } from './utils/newsCardsCloud';
+import { flushPendingQueue, reconcileRealtimeWithPendingQueue, getPendingQueue } from './utils/pendingSync';
 
 import { AuthGateScreen } from './components/AuthGateScreen';
 import { BelkinHeader } from './components/BelkinHeader';
@@ -119,6 +120,24 @@ export default function App() {
       setAuthLoading(false);
     });
   }, [isDevMode]);
+
+  // Synchronize pending offline queue upon auth, online event, or network reconnection
+  useEffect(() => {
+    if (!firebaseUser?.uid) return;
+
+    const handleOnline = () => {
+      flushPendingQueue(firebaseUser.uid).catch((err) => {
+        console.warn('[PendingSync] Flush queue error:', err);
+      });
+    };
+
+    window.addEventListener('online', handleOnline);
+    handleOnline();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [firebaseUser?.uid]);
 
   // Active current user profile
   const currentUser = useMemo<UserProfile | null>(() => {
@@ -268,14 +287,16 @@ export default function App() {
           // Subscribe strictly to this user's document /users/{effectiveId}
           unsubscribe = subscribeToUserProfile(effectiveId, (updatedCloudUser) => {
             if (!isMounted || !updatedCloudUser) return;
+            const pendingQueue = getPendingQueue(effectiveId);
+            const reconciledUser = reconcileRealtimeWithPendingQueue(updatedCloudUser, pendingQueue);
             setProfiles((prev) => {
               const idx = prev.findIndex(p => p.id === effectiveId);
               let updated: UserProfile[];
               if (idx >= 0) {
                 updated = [...prev];
-                updated[idx] = { ...prev[idx], ...updatedCloudUser };
+                updated[idx] = { ...prev[idx], ...reconciledUser };
               } else {
-                updated = [...prev, updatedCloudUser];
+                updated = [...prev, reconciledUser];
               }
               const sanitized = sanitizeProfiles(updated);
               saveStoredProfiles(sanitized);
@@ -759,6 +780,7 @@ export default function App() {
         setLastScheduledSlot(eligibleSlot);
 
         if (currentUser?.id) {
+          const lastKnownTime = currentUser.updatedAt;
           const updatedUser: UserProfile = {
             ...currentUser,
             lastScheduledRunDate: todayStr,
@@ -768,7 +790,7 @@ export default function App() {
           const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
           setProfiles(nextProfiles);
           saveStoredProfiles(nextProfiles);
-          syncUserProfileToServer(updatedUser);
+          syncUserProfileFieldsToServer(currentUser.id, { lastScheduledRunDate: todayStr, lastScheduledSlot: eligibleSlot }, lastKnownTime);
         }
       }
     }
@@ -817,68 +839,87 @@ export default function App() {
   const handleUpdateAppStyle = (style: AppArchetypeStyle) => {
     setAppStyle(style);
     if (currentUser?.id) {
+      const lastKnownTime = currentUser.updatedAt;
       const updatedUser: UserProfile = { ...currentUser, appStyle: style, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { appStyle: style }, lastKnownTime);
     }
   };
 
   const handleUpdateCustomWallpaper = (wallpaper: string) => {
     setCustomWallpaper(wallpaper);
     if (currentUser?.id) {
+      const lastKnownTime = currentUser.updatedAt;
       const updatedUser: UserProfile = { ...currentUser, customWallpaper: wallpaper, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { customWallpaper: wallpaper }, lastKnownTime);
     }
   };
 
   const handleUpdateCustomAiPrompt = (prompt: string) => {
     setCustomAiPrompt(prompt);
     if (currentUser?.id) {
+      const lastKnownTime = currentUser.updatedAt;
       const updatedUser: UserProfile = { ...currentUser, customAiPrompt: prompt, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { customAiPrompt: prompt }, lastKnownTime);
     }
   };
 
   const handleUpdateEnableAutoAiProcessing = (enabled: boolean) => {
     setEnableAutoAiProcessing(enabled);
     if (currentUser?.id) {
+      const lastKnownTime = currentUser.updatedAt;
       const updatedUser: UserProfile = { ...currentUser, enableAutoAiProcessing: enabled, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { enableAutoAiProcessing: enabled }, lastKnownTime);
     }
   };
 
   const handleUpdateScheduledHours = (hours: number[]) => {
     setScheduledHours(hours);
     if (currentUser?.id) {
+      const lastKnownTime = currentUser.updatedAt;
       const updatedUser: UserProfile = { ...currentUser, scheduledHours: hours, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { scheduledHours: hours }, lastKnownTime);
     }
   };
 
   // Update Notes
-  const handleUpdateNotes = (newNotes: MedicalNote[]) => {
-    setNotes(newNotes);
-    saveStoredMedicalNotes(newNotes, currentUser?.id || undefined);
+  const handleUpdateNotes = (inputNotes: MedicalNote[]) => {
+    const nowIso = new Date().toISOString();
+    const inputIds = new Set(inputNotes.map((n) => n.id).filter(Boolean));
+    const tombstones: MedicalNote[] = notes
+      .filter((n) => n.id && !inputIds.has(n.id))
+      .map((n) => ({
+        ...n,
+        deleted: true,
+        deletedAt: n.deletedAt || nowIso,
+        updatedAt: nowIso,
+        version: (n.version || 0) + 1,
+      }));
+
+    const completeNotes = [...inputNotes, ...tombstones];
+    setNotes(completeNotes);
+    saveStoredMedicalNotes(completeNotes, currentUser?.id || undefined);
     if (currentUser?.id) {
-      const updatedUser = { ...currentUser, notes: newNotes, updatedAt: new Date().toISOString() };
-      const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
+      const lastKnownTime = currentUser.updatedAt;
+      const updatedUser = { ...currentUser, notes: completeNotes, updatedAt: nowIso };
+      const nextProfiles = profiles.map((p) => (p.id === currentUser.id ? updatedUser : p));
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { notes: completeNotes }, lastKnownTime);
     }
   };
 
@@ -892,41 +933,92 @@ export default function App() {
       text,
       createdAt: now.toISOString(),
       timestampStr,
+      updatedAt: now.toISOString(),
+      deleted: false,
+      version: 1,
     };
-    handleUpdateNotes([newNote, ...notes]);
+    handleUpdateNotes([newNote, ...notes.filter((n) => !n.deleted)]);
   };
 
   const handleDeleteNote = (id: string) => {
-    handleUpdateNotes(notes.filter((n) => n.id !== id));
+    const nowIso = new Date().toISOString();
+    const target = notes.find((n) => n.id === id);
+    if (target) {
+      const tombstone: MedicalNote = {
+        ...target,
+        deleted: true,
+        deletedAt: nowIso,
+        updatedAt: nowIso,
+        version: (target.version || 0) + 1,
+      };
+      handleUpdateNotes(notes.map((n) => (n.id === id ? tombstone : n)));
+    } else {
+      handleUpdateNotes(notes.filter((n) => n.id !== id));
+    }
   };
 
   const handleEditNote = (id: string, newText: string) => {
-    handleUpdateNotes(notes.map((n) => (n.id === id ? { ...n, text: newText } : n)));
+    const nowIso = new Date().toISOString();
+    handleUpdateNotes(
+      notes.map((n) => (n.id === id ? { ...n, text: newText, updatedAt: nowIso, version: (n.version || 0) + 1 } : n))
+    );
   };
 
   // Work Schedules (Calendar)
-  const handleUpdateWorkSchedules = (newSchedules: Record<string, WorkDaySchedule>) => {
-    setWorkSchedules(newSchedules);
-    saveStoredWorkSchedules(newSchedules, currentUser?.id || undefined);
+  const handleUpdateWorkSchedules = (inputSchedules: Record<string, WorkDaySchedule>) => {
+    const nowIso = new Date().toISOString();
+    const completeSchedules = { ...inputSchedules };
+
+    for (const dateKey of Object.keys(workSchedules)) {
+      if (!completeSchedules[dateKey]) {
+        const existing = workSchedules[dateKey];
+        completeSchedules[dateKey] = {
+          ...(existing || { date: dateKey, shiftType: 'day-off' }),
+          date: dateKey,
+          deleted: true,
+          deletedAt: existing?.deletedAt || nowIso,
+          updatedAt: nowIso,
+          version: (existing?.version || 0) + 1,
+        };
+      }
+    }
+
+    setWorkSchedules(completeSchedules);
+    saveStoredWorkSchedules(completeSchedules, currentUser?.id || undefined);
     if (currentUser?.id) {
-      const updatedUser = { ...currentUser, workSchedules: newSchedules, updatedAt: new Date().toISOString() };
-      const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
+      const lastKnownTime = currentUser.updatedAt;
+      const updatedUser = { ...currentUser, workSchedules: completeSchedules, updatedAt: nowIso };
+      const nextProfiles = profiles.map((p) => (p.id === currentUser.id ? updatedUser : p));
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { workSchedules: completeSchedules }, lastKnownTime);
     }
   };
 
   // Personal Timers
-  const handleUpdateTimers = (newTimers: MedicalTimerItem[]) => {
-    setTimers(newTimers);
-    saveStoredMedicalTimers(newTimers, currentUser?.id || undefined);
+  const handleUpdateTimers = (inputTimers: MedicalTimerItem[]) => {
+    const nowIso = new Date().toISOString();
+    const inputIds = new Set(inputTimers.map((t) => t.id).filter(Boolean));
+    const tombstones: MedicalTimerItem[] = timers
+      .filter((t) => t.id && !inputIds.has(t.id))
+      .map((t) => ({
+        ...t,
+        deleted: true,
+        deletedAt: t.deletedAt || nowIso,
+        updatedAt: nowIso,
+        version: (t.version || 0) + 1,
+      }));
+
+    const completeTimers = [...inputTimers, ...tombstones];
+    setTimers(completeTimers);
+    saveStoredMedicalTimers(completeTimers, currentUser?.id || undefined);
     if (currentUser?.id) {
-      const updatedUser = { ...currentUser, timers: newTimers, updatedAt: new Date().toISOString() };
-      const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
+      const lastKnownTime = currentUser.updatedAt;
+      const updatedUser = { ...currentUser, timers: completeTimers, updatedAt: nowIso };
+      const nextProfiles = profiles.map((p) => (p.id === currentUser.id ? updatedUser : p));
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { timers: completeTimers }, lastKnownTime);
     }
   };
 
@@ -935,11 +1027,12 @@ export default function App() {
     setAccessibility(newCfg);
     saveStoredAccessibility(newCfg, currentUser?.id || undefined);
     if (currentUser?.id) {
+      const lastKnownTime = currentUser.updatedAt;
       const updatedUser = { ...currentUser, accessibility: newCfg, updatedAt: new Date().toISOString() };
       const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { accessibility: newCfg }, lastKnownTime);
     }
   };
 
@@ -1085,42 +1178,126 @@ export default function App() {
   };
 
   const handleDeleteArticle = (articleId: string) => {
+    const nowIso = new Date().toISOString();
     setArticles((prev) => {
       const target = prev.find((a) => a.id === articleId);
       if (target) {
-        const hiddenArt = { ...target, isHidden: true, updatedAt: new Date().toISOString() };
-        saveNewsCardToFirestore(hiddenArt).catch((err) => {
-          console.warn('[Firestore NewsCards] Failed to save hidden state on delete:', err);
+        const tombstoneArt: Article = {
+          ...target,
+          deleted: true,
+          deletedAt: nowIso,
+          updatedAt: nowIso,
+          version: (target.version || 0) + 1,
+        };
+        deleteNewsCardFromFirestore(articleId, tombstoneArt).catch((err) => {
+          console.warn('[Firestore NewsCards] Failed to save tombstone on delete:', err);
         });
+        const next = prev.map((a) => (a.id === articleId ? tombstoneArt : a));
+        saveStoredArticles(next, currentUser?.id || undefined);
+        return next;
       }
-      const next = prev.filter((a) => a.id !== articleId);
-      saveStoredArticles(next, currentUser?.id || undefined);
-      return next;
+      return prev;
     });
     playUiSound('click');
   };
 
   // Bookmarks Quick Launcher Handlers
-  const handleUpdateBookmarks = (newBookmarks: DesktopBookmark[]) => {
-    setBookmarks(newBookmarks);
-    saveStoredBookmarks(newBookmarks, currentUser?.id || undefined);
+  const handleUpdateBookmarks = (inputBookmarks: DesktopBookmark[]) => {
+    const nowIso = new Date().toISOString();
+    const inputIds = new Set(inputBookmarks.map((b) => b.id).filter(Boolean));
+    const tombstones: DesktopBookmark[] = bookmarks
+      .filter((b) => b.id && !inputIds.has(b.id))
+      .map((b) => ({
+        ...b,
+        deleted: true,
+        deletedAt: b.deletedAt || nowIso,
+        updatedAt: nowIso,
+        version: (b.version || 0) + 1,
+      }));
+
+    const completeBookmarks = [...inputBookmarks, ...tombstones];
+    setBookmarks(completeBookmarks);
+    saveStoredBookmarks(completeBookmarks, currentUser?.id || undefined);
     if (currentUser?.id) {
-      const updatedUser = { ...currentUser, bookmarks: newBookmarks, updatedAt: new Date().toISOString() };
+      const lastKnownTime = currentUser.updatedAt;
+      const updatedUser = { ...currentUser, bookmarks: completeBookmarks, updatedAt: nowIso };
       const nextProfiles = profiles.map((p) => (p.id === currentUser.id ? updatedUser : p));
       setProfiles(nextProfiles);
       saveStoredProfiles(nextProfiles);
-      syncUserProfileToServer(updatedUser);
+      syncUserProfileFieldsToServer(currentUser.id, { bookmarks: completeBookmarks }, lastKnownTime);
+    }
+  };
+
+  const handleUpdateFeeds = (inputFeeds: FeedConfig[]) => {
+    const nowIso = new Date().toISOString();
+    const inputIds = new Set(inputFeeds.map((f) => f.id).filter(Boolean));
+    const tombstones: FeedConfig[] = feeds
+      .filter((f) => f.id && !inputIds.has(f.id))
+      .map((f) => ({
+        ...f,
+        deleted: true,
+        deletedAt: f.deletedAt || nowIso,
+        updatedAt: nowIso,
+        version: (f.version || 0) + 1,
+      }));
+
+    const completeFeeds = [...inputFeeds, ...tombstones];
+    setFeeds(completeFeeds);
+    if (currentUser?.id) {
+      const lastKnownTime = currentUser.updatedAt;
+      const updatedUser = { ...currentUser, feeds: completeFeeds, updatedAt: nowIso };
+      const nextProfiles = profiles.map((p) => (p.id === currentUser.id ? updatedUser : p));
+      setProfiles(nextProfiles);
+      saveStoredProfiles(nextProfiles);
+      syncUserProfileFieldsToServer(currentUser.id, { feeds: completeFeeds }, lastKnownTime);
     }
   };
 
   const handleSaveAllWorkspaceSettings = (updates: Partial<UserProfile>) => {
     if (!currentUser?.id) return;
 
+    const lastKnownTime = currentUser.updatedAt;
+    const nowIso = new Date().toISOString();
+
+    const patchPayload: Record<string, any> = { ...updates };
+
+    if (updates.feeds !== undefined) {
+      const inputIds = new Set(updates.feeds.map((f) => f.id).filter(Boolean));
+      const tombstones = feeds
+        .filter((f) => f.id && !inputIds.has(f.id))
+        .map((f) => ({
+          ...f,
+          deleted: true,
+          deletedAt: f.deletedAt || nowIso,
+          updatedAt: nowIso,
+          version: (f.version || 0) + 1,
+        }));
+      const completeFeeds = [...updates.feeds, ...tombstones];
+      setFeeds(completeFeeds);
+      patchPayload.feeds = completeFeeds;
+    }
+    if (updates.bookmarks !== undefined) {
+      const inputIds = new Set(updates.bookmarks.map((b) => b.id).filter(Boolean));
+      const tombstones = bookmarks
+        .filter((b) => b.id && !inputIds.has(b.id))
+        .map((b) => ({
+          ...b,
+          deleted: true,
+          deletedAt: b.deletedAt || nowIso,
+          updatedAt: nowIso,
+          version: (b.version || 0) + 1,
+        }));
+      const completeBookmarks = [...updates.bookmarks, ...tombstones];
+      setBookmarks(completeBookmarks);
+      saveStoredBookmarks(completeBookmarks, currentUser.id);
+      patchPayload.bookmarks = completeBookmarks;
+    }
+
     // 1. Build the updated profile immediately
     const updatedUser: UserProfile = {
       ...currentUser,
-      ...updates,
-      updatedAt: new Date().toISOString()
+      ...patchPayload,
+      updatedAt: nowIso
     };
 
     // 2. Synchronously update all individual states in React
@@ -1164,8 +1341,8 @@ export default function App() {
     setProfiles(nextProfiles);
     saveStoredProfiles(nextProfiles);
 
-    // 4. Send a single sync/save request to the server
-    syncUserProfileToServer(updatedUser).catch((err) => {
+    // 4. Send granular fields update request to server with lastKnownTime check
+    syncUserProfileFieldsToServer(currentUser.id, updates, lastKnownTime).catch((err) => {
       console.error('Failed to sync updated workspace settings:', err);
     });
   };
@@ -1253,13 +1430,13 @@ export default function App() {
     
     // Function to ping
     const ping = () => {
+      const nowIso = new Date().toISOString();
       setProfiles(prev => {
-        const next = prev.map(p => p.id === effectiveId ? { ...p, lastActiveAt: new Date().toISOString() } : p);
+        const next = prev.map(p => p.id === effectiveId ? { ...p, lastActiveAt: nowIso } : p);
         saveStoredProfiles(next);
-        const activeProfile = next.find(p => p.id === effectiveId);
-        if (activeProfile) syncUserProfileToServer(activeProfile);
         return next;
       });
+      syncUserProfileFieldsToServer(effectiveId, { lastActiveAt: nowIso });
     };
 
     ping();
@@ -1431,7 +1608,7 @@ export default function App() {
     );
   }
 
-  const unreadCount = articles.filter((a) => !a.isRead).length;
+  const unreadCount = articles.filter((a) => !a.isRead && !a.deleted).length;
 
   return (
     <div 
@@ -1498,11 +1675,11 @@ export default function App() {
       <main className="flex-1 flex overflow-hidden">
         {/* Left Side: Timers, Weather, Shift Calendar, Quick Launcher */}
         <MedicalLeftPanel
-          timers={timers}
+          timers={timers.filter((t) => !t.deleted)}
           onUpdateTimers={handleUpdateTimers}
           workSchedules={workSchedules}
           onUpdateWorkSchedules={handleUpdateWorkSchedules}
-          bookmarks={bookmarks}
+          bookmarks={bookmarks.filter((b) => !b.deleted)}
           onUpdateBookmarks={handleUpdateBookmarks}
           onOpenSettingsTab={(tab) => {
             setControlCenterTab(tab);
@@ -1516,7 +1693,7 @@ export default function App() {
         {/* Right Side: Tab View (ЗАМЕТКИ or НОВОСТИ) */}
         {activeTab === 'notes' ? (
           <NotesPane
-            notes={notes}
+            notes={notes.filter((n) => !n.deleted)}
             onAddNote={handleAddNote}
             onEditNote={handleEditNote}
             onDeleteNote={handleDeleteNote}
@@ -1525,8 +1702,8 @@ export default function App() {
           />
         ) : (
           <MedicalNewsPane
-            articles={articles}
-            feeds={feeds}
+            articles={articles.filter((a) => !a.deleted)}
+            feeds={feeds.filter((f) => !f.deleted)}
             activeFeedId={activeFeedId}
             onSelectFeed={setActiveFeedId}
             onSelectArticle={(art) => setSelectedArticle(art)}
@@ -1567,17 +1744,9 @@ export default function App() {
         isOpen={isControlCenterOpen}
         onClose={() => setIsControlCenterOpen(false)}
         initialTab={controlCenterTab}
-        feeds={feeds}
-        onUpdateFeeds={(f) => {
-          if (!currentUser?.id) return;
-          setFeeds(f);
-          const updatedUser = { ...currentUser, feeds: f, updatedAt: new Date().toISOString() };
-          const nextProfiles = profiles.map(p => p.id === currentUser.id ? updatedUser : p);
-          setProfiles(nextProfiles);
-          saveStoredProfiles(nextProfiles);
-          syncUserProfileToServer(updatedUser);
-        }}
-        timers={timers}
+        feeds={feeds.filter((f) => !f.deleted)}
+        onUpdateFeeds={handleUpdateFeeds}
+        timers={timers.filter((t) => !t.deleted)}
         onUpdateTimers={handleUpdateTimers}
         accessibility={accessibility}
         onUpdateAccessibility={handleUpdateAccessibility}
@@ -1622,8 +1791,8 @@ export default function App() {
           onClose={() => setIsAdminPanelOpen(false)}
           currentUser={currentUser}
           allProfiles={profiles}
-          notes={notes}
-          timers={timers}
+          notes={notes.filter((n) => !n.deleted)}
+          timers={timers.filter((t) => !t.deleted)}
           accessibility={accessibility}
           onUpdateUserRole={handleUpdateUserRole}
           onUpdateUserDetails={handleUpdateUserDetails}

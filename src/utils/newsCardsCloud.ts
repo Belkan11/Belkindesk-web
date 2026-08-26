@@ -1,5 +1,6 @@
 import { 
   doc, 
+  getDoc,
   setDoc, 
   deleteDoc, 
   getDocs, 
@@ -10,6 +11,7 @@ import {
 import { db, auth, logFirestoreError } from './firebase';
 import { Article, NewsCard } from '../types';
 import { getStoredArticles, getSeenArticlesList } from './storage';
+import { isRetryableError, addPendingOperation } from './pendingSync';
 
 /**
  * Normalizes an Article or NewsCard object into a clean NewsCard for Firestore persistence.
@@ -86,9 +88,42 @@ export async function saveNewsCardToFirestore(item: NewsCard | Article): Promise
 
   try {
     const cardRef = doc(db, 'users', uid, 'newsCards', card.id);
+    const snap = await getDoc(cardRef);
+    if (snap.exists()) {
+      const cloudCard = snap.data() as NewsCard;
+      const cloudTime = cloudCard.updatedAt ? new Date(cloudCard.updatedAt).getTime() : 0;
+      const localTime = card.updatedAt ? new Date(card.updatedAt).getTime() : 0;
+
+      if (cloudTime > localTime) {
+        // Cloud card is newer: perform safe flag merge to prevent overwriting newer user flags or notes from another device
+        const merged: NewsCard = {
+          ...cloudCard,
+          ...card,
+          isRead: localTime >= cloudTime ? Boolean(card.isRead) : Boolean(cloudCard.isRead),
+          isStarred: localTime >= cloudTime ? Boolean(card.isStarred) : Boolean(cloudCard.isStarred),
+          isHidden: localTime >= cloudTime ? Boolean(card.isHidden) : Boolean(cloudCard.isHidden),
+          savedLater: localTime >= cloudTime ? Boolean(card.savedLater) : Boolean(cloudCard.savedLater),
+          userNote: localTime >= cloudTime ? (card.userNote || '') : (cloudCard.userNote || ''),
+          updatedAt: cloudCard.updatedAt,
+        };
+        await setDoc(cardRef, merged, { merge: true });
+        return;
+      }
+    }
     await setDoc(cardRef, card, { merge: true });
   } catch (err) {
     logFirestoreError('SAVE_NEWS_CARD', cardPath, err);
+    if (uid && isRetryableError(err)) {
+      addPendingOperation({
+        userId: uid,
+        entityType: 'newsCards',
+        entityId: card.id,
+        operation: 'update',
+        payload: card,
+        baseUpdatedAt: card.updatedAt,
+        localUpdatedAt: new Date().toISOString(),
+      });
+    }
     throw err;
   }
 }
@@ -117,6 +152,20 @@ export async function saveNewsCardsBatchToFirestore(items: (NewsCard | Article)[
       await batch.commit();
     } catch (err) {
       logFirestoreError('BATCH_SAVE_NEWS_CARDS', `users/${uid}/newsCards (batch)`, err);
+      if (uid && isRetryableError(err)) {
+        for (const rawItem of chunk) {
+          const card = mapToNewsCard(rawItem);
+          addPendingOperation({
+            userId: uid,
+            entityType: 'newsCards',
+            entityId: card.id,
+            operation: 'update',
+            payload: card,
+            baseUpdatedAt: card.updatedAt,
+            localUpdatedAt: new Date().toISOString(),
+          });
+        }
+      }
       throw err;
     }
   }
@@ -153,19 +202,46 @@ export async function loadNewsCardsFromFirestore(): Promise<NewsCard[]> {
 }
 
 /**
- * Delete a specific NewsCard from Firestore for the current authenticated user.
+ * Delete a specific NewsCard from Firestore for the current authenticated user using tombstones.
  * Path: /users/{firebaseUser.uid}/newsCards/{cardId}
  */
-export async function deleteNewsCardFromFirestore(cardId: string): Promise<void> {
+export async function deleteNewsCardFromFirestore(cardId: string, itemPayload?: Article | NewsCard): Promise<void> {
   const uid = auth.currentUser?.uid;
   if (!uid || !cardId) return;
 
   const cardPath = `users/${uid}/newsCards/${cardId}`;
+  const nowIso = new Date().toISOString();
+
+  const tombstone: NewsCard = {
+    id: cardId,
+    title: itemPayload?.title || '',
+    url: itemPayload?.url || (itemPayload as any)?.link || '',
+    sourceId: itemPayload?.sourceId || (itemPayload as any)?.feedId || 'custom',
+    sourceName: itemPayload?.sourceName || (itemPayload as any)?.feedTitle || '',
+    publishedAt: itemPayload?.publishedAt || (itemPayload as any)?.pubDate || nowIso,
+    fetchedAt: itemPayload?.fetchedAt || nowIso,
+    deleted: true,
+    deletedAt: itemPayload?.deletedAt || nowIso,
+    updatedAt: itemPayload?.updatedAt || nowIso,
+    version: ((itemPayload as any)?.version || 0) + 1,
+  };
+
   try {
     const cardRef = doc(db, 'users', uid, 'newsCards', cardId);
-    await deleteDoc(cardRef);
+    await setDoc(cardRef, tombstone, { merge: true });
   } catch (err) {
     logFirestoreError('DELETE_NEWS_CARD', cardPath, err);
+    if (uid && isRetryableError(err)) {
+      addPendingOperation({
+        userId: uid,
+        entityType: 'newsCards',
+        entityId: cardId,
+        operation: 'delete',
+        payload: tombstone,
+        baseUpdatedAt: tombstone.updatedAt,
+        localUpdatedAt: nowIso,
+      });
+    }
     throw err;
   }
 }
@@ -208,22 +284,30 @@ export function subscribeToNewsCardsFromFirestore(
   }
 }
 
+function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
 /**
- * Generates a stable ID for an article.
- * If the article has an existing valid ID (not generic placeholder), returns it.
- * Otherwise, generates a deterministic string hash from the URL/link.
+ * Generates a stable deterministic ID for an article.
+ * Algorithm:
+ * 1. If URL/link exists -> deterministic hash ID (`card_url_<hash>`).
+ * 2. If URL is missing, but valid stable ID exists -> use ID.
+ * 3. Otherwise -> deterministic hash ID from combination of stable fields
+ *    (`source/feed + title + publishedAt/pubDate`).
  */
 export function getStableCardId(item: Article | NewsCard): string {
-  const rawUrl = item.url || item.link || '';
+  const rawUrl = (item.url || item.link || '').trim();
   if (rawUrl) {
-    let hash = 0;
-    for (let i = 0; i < rawUrl.length; i++) {
-      const char = rawUrl.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash |= 0;
-    }
-    return `card_url_${Math.abs(hash).toString(36)}`;
+    return `card_url_${hashString(rawUrl)}`;
   }
+
   if (
     item.id && 
     typeof item.id === 'string' && 
@@ -234,7 +318,20 @@ export function getStableCardId(item: Article | NewsCard): string {
   ) {
     return item.id.trim();
   }
-  return item.id || `card_${Date.now()}`;
+
+  // Fallback deterministic combination of stable fields (source/feed + title + publishedAt/pubDate)
+  const source = (item.sourceId || item.sourceName || (item as any).feedId || (item as any).feedTitle || '').trim();
+  const title = (item.title || '').trim();
+  const pubDate = (item.publishedAt || (item as any).pubDate || (item as any).isoDate || '').trim();
+  const combo = `${source}|${title}|${pubDate}`.trim();
+
+  if (combo.replace(/\|/g, '').length > 0) {
+    return `card_combo_${hashString(combo)}`;
+  }
+
+  // Absolute fallback if title/pubDate/source are all empty
+  const content = ((item as any).content || (item as any).contentSnippet || item.summary || item.description || '').trim();
+  return `card_combo_${hashString(content || 'empty_news_card')}`;
 }
 
 /**
@@ -280,12 +377,7 @@ export function mergeCloudAndRssArticles(
       processedCloudIds.add(cloudStableId);
       if (cloudCard.id) processedCloudIds.add(cloudCard.id);
 
-      // Check updatedAt timestamps for Last-Write-Wins (LWW)
-      const cloudTime = cloudCard.updatedAt ? new Date(cloudCard.updatedAt).getTime() : 0;
-      const localTime = rssArt.updatedAt ? new Date(rssArt.updatedAt).getTime() : 0;
-      const useCloudStates = cloudTime >= localTime || !rssArt.updatedAt;
-
-      // Card exists in both: update content from RSS, strictly preserve user states from Firestore
+      // Card exists in both: RSS updates CONTENT STATE, cloudCard strictly maintains USER STATE
       const mergedArticle: Article = {
         ...rssArt,
         id: stableId,
@@ -306,17 +398,23 @@ export function mergeCloudAndRssArticles(
         feedTitle: rssArt.feedTitle || cloudCard.sourceName,
         feedCategory: rssArt.feedCategory || cloudCard.category,
 
-        // USER STATES with LWW (false is a valid state)
-        isRead: useCloudStates ? Boolean(cloudCard.isRead) : Boolean(rssArt.isRead),
-        isStarred: useCloudStates ? Boolean(cloudCard.isStarred) : Boolean(rssArt.isStarred),
-        isHidden: useCloudStates ? Boolean(cloudCard.isHidden) : Boolean(rssArt.isHidden),
-        savedLater: useCloudStates ? Boolean(cloudCard.savedLater) : Boolean(rssArt.savedLater || rssArt.isSavedLater),
-        isSavedLater: useCloudStates ? Boolean(cloudCard.savedLater) : Boolean(rssArt.savedLater || rssArt.isSavedLater),
-        userNote: useCloudStates ? (cloudCard.userNote || '') : (rssArt.userNote || ''),
-        updatedAt: useCloudStates ? (cloudCard.updatedAt || new Date().toISOString()) : (rssArt.updatedAt || new Date().toISOString()),
+        // USER STATES: Strictly from cloudCard (RSS metadata updates do NOT alter cloud user state)
+        isRead: Boolean(cloudCard.isRead),
+        isStarred: Boolean(cloudCard.isStarred),
+        isHidden: Boolean(cloudCard.isHidden),
+        savedLater: Boolean(cloudCard.savedLater),
+        isSavedLater: Boolean(cloudCard.savedLater),
+        userNote: cloudCard.userNote || '',
+        updatedAt: cloudCard.updatedAt || new Date().toISOString(),
+        deleted: Boolean(cloudCard.deleted),
+        deletedAt: cloudCard.deletedAt,
+        version: Math.max((cloudCard.version || 0), (rssArt.version || 0)),
       };
 
       mergedMap.set(stableId, mergedArticle);
+      if (cloudCard.deleted) {
+        // Do not re-save deleted cards back to cloud
+      }
     } else {
       // New article from RSS only
       const newArticle: Article = {
@@ -329,10 +427,15 @@ export function mergeCloudAndRssArticles(
         isSavedLater: Boolean(rssArt.savedLater || rssArt.isSavedLater),
         userNote: rssArt.userNote || '',
         updatedAt: rssArt.updatedAt || new Date().toISOString(),
+        deleted: Boolean(rssArt.deleted),
+        deletedAt: rssArt.deletedAt,
+        version: rssArt.version || 1,
       };
 
       mergedMap.set(stableId, newArticle);
-      cardsToSaveToCloud.push(newArticle);
+      if (!newArticle.deleted) {
+        cardsToSaveToCloud.push(newArticle);
+      }
     }
   }
 
@@ -371,6 +474,9 @@ export function mergeCloudAndRssArticles(
         isSavedLater: Boolean(card.savedLater),
         userNote: card.userNote || '',
         updatedAt: card.updatedAt || new Date().toISOString(),
+        deleted: Boolean(card.deleted),
+        deletedAt: card.deletedAt,
+        version: card.version || 1,
         aiSummary: card.aiSummary,
         keyTerms: card.keyTerms,
       };

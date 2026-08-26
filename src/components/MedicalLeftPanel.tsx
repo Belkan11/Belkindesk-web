@@ -232,6 +232,7 @@ export const MedicalLeftPanel: React.FC<MedicalLeftPanelProps> = ({
       let found = false;
       Object.entries(workSchedules).forEach(([dateStr, sched]) => {
         const scheduleObj = sched as WorkDaySchedule;
+        if (scheduleObj?.deleted) return;
         if (Array.isArray(scheduleObj?.entries)) {
           extractedEntries[dateStr] = scheduleObj.entries;
           found = true;
@@ -371,6 +372,7 @@ export const MedicalLeftPanel: React.FC<MedicalLeftPanelProps> = ({
   const getDayType = (dateStr: string, dayNum: number, isCurM: boolean = true): 'work' | 'day-off' | 'event' => {
     if (!isCurM) return 'work';
     const s = workSchedules[dateStr];
+    if (s?.deleted) return 'work';
     if (s?.shiftType === 'day-off' || s?.shiftType === 'vacation') return 'day-off';
     if (s?.shiftType === 'event' || s?.shiftType === 'duty' || s?.shiftType === 'sick-leave') return 'event';
     if (s?.shiftType === 'work-office' || s?.shiftType === 'work-remote') return 'work';
