@@ -1800,6 +1800,13 @@ export default function App() {
         onAuthSuccess={(userId) => {
           setActiveSessionId(userId);
           saveActiveSessionUserId(userId);
+          if (localStorage.getItem('belkindesk_use_test_auth') === 'true') {
+            setFirebaseUser({
+              uid: userId,
+              email: localStorage.getItem('belkindesk_test_auth_email') || `${userId}@pulsedesk.local`,
+              displayName: localStorage.getItem('belkindesk_test_auth_username') || 'Пользователь',
+            });
+          }
         }}
         profiles={profiles}
         onSetProfiles={(next) => {

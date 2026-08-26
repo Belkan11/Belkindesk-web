@@ -110,9 +110,10 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
   const [newUserAbout, setNewUserAbout] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserAvatar, setNewUserAvatar] = useState(PRESET_AVATARS[0].url);
+  const [newUserError, setNewUserError] = useState<string | null>(null);
   
   const [showPassword, setShowPassword] = useState(false);
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(currentUser.password || '');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [customAvatarUrl, setCustomAvatarUrl] = useState('');
@@ -171,6 +172,16 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
       }
     }
 
+    // Validate password
+    if (!password || password.trim() === '') {
+      setAiError('Пароль не может быть пустым');
+      return;
+    }
+    if (password.length < 4) {
+      setAiError('Пароль должен содержать не менее 4 символов');
+      return;
+    }
+
     const cats = categoriesInput.split(',').map(c => c.trim()).filter(Boolean);
     saveAISettings(aiProvider, rawKey, aiModel, aiUrl, currentUser, (updatedProfile) => {
       onSaveProfile({
@@ -180,6 +191,7 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
         displayName: displayName.trim(),
         email: email.trim(),
         avatar,
+        password: password,
         profession: profession.trim(),
         specialization: profession.trim(),
         about: about.trim(),
@@ -245,14 +257,25 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
 
   const handleCreateNewCabinet = (e: React.FormEvent) => {
     e.preventDefault();
+    setNewUserError(null);
     if (!newUserName.trim()) return;
+
+    const pwd = newUserPassword.trim();
+    if (pwd === '') {
+      setNewUserError('Пароль не может быть пустым');
+      return;
+    }
+    if (pwd.length < 4) {
+      setNewUserError('Пароль должен содержать не менее 4 символов');
+      return;
+    }
 
     onCreateUser(
       newUserName.trim(),
       newUserEmail.trim() || `${(newUserLogin || newUserName).toLowerCase()}@belkindesk.local`,
       newUserAvatar,
       newUserLogin.trim() || newUserName.trim(),
-      newUserPassword.trim() || '1234',
+      pwd,
       newUserProfession.trim(),
       newUserAbout.trim()
     );
@@ -262,6 +285,7 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
     setNewUserEmail('');
     setNewUserProfession('');
     setNewUserAbout('');
+    setNewUserPassword('');
     setActiveTab('switch');
     onPlaySound?.('success');
   };
@@ -1009,6 +1033,12 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
                   className="w-full px-3 py-2 bg-[#0a0d11] border border-[#3b3220] focus:border-[#ffcc00] rounded-lg text-xs text-slate-100 focus:outline-hidden font-mono"
                 />
               </div>
+
+              {newUserError && (
+                <div className="p-3 bg-rose-950/40 border border-rose-500/40 rounded-lg text-rose-300 text-xs font-mono">
+                  {newUserError}
+                </div>
+              )}
 
               <div className="pt-2">
                 <button

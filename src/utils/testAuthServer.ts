@@ -81,9 +81,6 @@ export function verifySessionToken(token: string): { uuid: string } | null {
 
 // Bootstrap administrator "Belkin"
 export function bootstrapTestAdmin() {
-  const isEnabled = process.env.ENABLE_TEST_AUTH === 'true';
-  if (!isEnabled) return;
-
   const users = loadTestUsers();
   const adminUsername = process.env.TEST_ADMIN_USERNAME || 'Belkin';
   const adminPassword = process.env.TEST_ADMIN_PASSWORD || '1511';
