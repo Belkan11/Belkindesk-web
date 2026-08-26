@@ -36,10 +36,18 @@ export const BottomBookmarksSettingsModal: React.FC<BottomBookmarksSettingsModal
 }) => {
   const isModern = appStyle === 'modern';
   const [localSlots, setLocalSlots] = useState<DesktopBookmark[]>(() => {
-    if (Array.isArray(bookmarks) && bookmarks.length >= 3) {
-      return bookmarks.slice(0, 3);
+    const arr = [...(bookmarks || [])];
+    while (arr.length < 3) {
+      arr.push({
+        id: `bm-temp-${Date.now()}-${arr.length}`,
+        title: '',
+        url: '',
+        category: 'Пользователь',
+        isPinned: true,
+        description: '',
+      });
     }
-    return INITIAL_BOOKMARKS;
+    return arr.slice(0, 3);
   });
 
   const [activeSlotIdx, setActiveSlotIdx] = useState<number>(0);
@@ -47,11 +55,18 @@ export const BottomBookmarksSettingsModal: React.FC<BottomBookmarksSettingsModal
 
   useEffect(() => {
     if (isOpen) {
-      if (Array.isArray(bookmarks) && bookmarks.length >= 3) {
-        setLocalSlots(bookmarks.slice(0, 3));
-      } else {
-        setLocalSlots(INITIAL_BOOKMARKS);
+      const arr = [...(bookmarks || [])];
+      while (arr.length < 3) {
+        arr.push({
+          id: `bm-temp-${Date.now()}-${arr.length}`,
+          title: '',
+          url: '',
+          category: 'Пользователь',
+          isPinned: true,
+          description: '',
+        });
       }
+      setLocalSlots(arr.slice(0, 3));
     }
   }, [isOpen, bookmarks]);
 

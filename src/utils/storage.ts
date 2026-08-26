@@ -211,12 +211,19 @@ const STORAGE_TIMERS_KEY = 'belkindesk_med_timers_v2';
 const STORAGE_ACCESSIBILITY_KEY = 'belkindesk_med_accessibility_v2';
 const STORAGE_BOOKMARKS_KEY = 'belkindesk_bottom_bookmarks_v2';
 
-export function getStoredBookmarks(): DesktopBookmark[] {
+const isDevMode = typeof window !== 'undefined' && (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.includes('ais-dev')
+);
+
+export function getStoredBookmarks(userId?: string): DesktopBookmark[] {
   try {
-    const raw = localStorage.getItem(STORAGE_BOOKMARKS_KEY);
+    const key = userId ? `${STORAGE_BOOKMARKS_KEY}_${userId}` : STORAGE_BOOKMARKS_KEY;
+    const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return parsed.map((b, i) => ({
           id: String(b.id || `bm-${i + 1}`),
           title: String(b.name || b.title || 'Ссылка'),
@@ -233,16 +240,18 @@ export function getStoredBookmarks(): DesktopBookmark[] {
   return INITIAL_BOOKMARKS;
 }
 
-export function saveStoredBookmarks(bookmarks: DesktopBookmark[]) {
+export function saveStoredBookmarks(bookmarks: DesktopBookmark[], userId?: string) {
   try {
     if (!Array.isArray(bookmarks)) return;
-    localStorage.setItem(STORAGE_BOOKMARKS_KEY, JSON.stringify(bookmarks));
+    const key = userId ? `${STORAGE_BOOKMARKS_KEY}_${userId}` : STORAGE_BOOKMARKS_KEY;
+    localStorage.setItem(key, JSON.stringify(bookmarks));
   } catch {}
 }
 
-export function getStoredAccessibility(): AccessibilityConfig {
+export function getStoredAccessibility(userId?: string): AccessibilityConfig {
   try {
-    const raw = localStorage.getItem(STORAGE_ACCESSIBILITY_KEY);
+    const key = userId ? `${STORAGE_ACCESSIBILITY_KEY}_${userId}` : STORAGE_ACCESSIBILITY_KEY;
+    const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
@@ -258,19 +267,21 @@ export function getStoredAccessibility(): AccessibilityConfig {
   return INITIAL_ACCESSIBILITY;
 }
 
-export function saveStoredAccessibility(cfg: AccessibilityConfig) {
+export function saveStoredAccessibility(cfg: AccessibilityConfig, userId?: string) {
   try {
     if (!cfg || typeof cfg !== 'object') return;
-    localStorage.setItem(STORAGE_ACCESSIBILITY_KEY, JSON.stringify(cfg));
+    const key = userId ? `${STORAGE_ACCESSIBILITY_KEY}_${userId}` : STORAGE_ACCESSIBILITY_KEY;
+    localStorage.setItem(key, JSON.stringify(cfg));
   } catch {}
 }
 
-export function getStoredMedicalNotes(): MedicalNote[] {
+export function getStoredMedicalNotes(userId?: string): MedicalNote[] {
   try {
-    const raw = localStorage.getItem(STORAGE_NOTES_KEY);
+    const key = userId ? `${STORAGE_NOTES_KEY}_${userId}` : STORAGE_NOTES_KEY;
+    const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return parsed
           .filter((n) => n && typeof n === 'object' && typeof n.text === 'string')
           .map((n, i) => ({
@@ -285,10 +296,11 @@ export function getStoredMedicalNotes(): MedicalNote[] {
   return INITIAL_MEDICAL_NOTES;
 }
 
-export function saveStoredMedicalNotes(notes: MedicalNote[]) {
+export function saveStoredMedicalNotes(notes: MedicalNote[], userId?: string) {
   try {
     if (!Array.isArray(notes)) return;
-    localStorage.setItem(STORAGE_NOTES_KEY, JSON.stringify(notes));
+    const key = userId ? `${STORAGE_NOTES_KEY}_${userId}` : STORAGE_NOTES_KEY;
+    localStorage.setItem(key, JSON.stringify(notes));
   } catch {}
 }
 
@@ -298,7 +310,7 @@ export function getStoredMedicalTimers(userId?: string): MedicalTimerItem[] {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return parsed
           .filter((t) => t && typeof t === 'object')
           .map((t, i) => ({
@@ -485,74 +497,96 @@ export const TEST_AGENTS_PROFILES: UserProfile[] = [
   }
 ];
 
+export function sanitizeProfiles(parsed: UserProfile[]): UserProfile[] {
+  if (!Array.isArray(parsed)) return [];
+  const sanitized: UserProfile[] = parsed
+    .filter((p) => p && typeof p === 'object' && p.id)
+    .map((p) => {
+      const uName = String(p.username || p.login || 'Пользователь');
+      const uLogin = String(p.login || p.username || uName);
+      const uEmail = String(p.email || `${uLogin.toLowerCase()}@local.desk`);
+      const uDisplay = String(p.displayName || uName);
+      const isAdmin = uLogin.toLowerCase() === 'belkin' || p.id === 'user-admin-belkin';
+      
+      // Preserve user feeds and settings carefully!
+      const userFeeds = Array.isArray(p.feeds) ? p.feeds : ENGINEER_DEFAULT_FEEDS;
+      const style = p.appStyle || 'engineer';
+      const aiPrompt = p.customAiPrompt || DEFAULT_AI_PROMPTS[style] || DEFAULT_AI_PROMPTS.engineer;
+
+      // CRITICAL SECURITY RULE: Only explicitly designated dev/demo profiles in Dev Mode retain a password!
+      const isExplicitDemoProfile = p.id === 'user-admin-belkin' || p.id.startsWith('agent-');
+      const allowPassword = isExplicitDemoProfile && isDevMode;
+
+      const cleanProfile: UserProfile = {
+        ...p,
+        username: uName,
+        login: uLogin,
+        email: uEmail,
+        displayName: uDisplay,
+        role: (isAdmin ? 'admin' : (p.role || 'user')) as 'admin' | 'doctor' | 'user',
+        feeds: userFeeds,
+        appStyle: style,
+        customAiPrompt: aiPrompt,
+        notes: Array.isArray(p.notes) ? p.notes : INITIAL_MEDICAL_NOTES,
+        timers: Array.isArray(p.timers) ? p.timers : INITIAL_MEDICAL_TIMERS,
+        bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks : INITIAL_BOOKMARKS,
+        scheduledHours: Array.isArray(p.scheduledHours) ? p.scheduledHours : [6, 12, 19],
+        workSchedules: p.workSchedules || {},
+        accessibility: p.accessibility || INITIAL_ACCESSIBILITY,
+        starredArticleIds: Array.isArray(p.starredArticleIds) ? p.starredArticleIds : [],
+        readArticleIds: Array.isArray(p.readArticleIds) ? p.readArticleIds : [],
+        savedLaterArticleIds: Array.isArray(p.savedLaterArticleIds) ? p.savedLaterArticleIds : [],
+        customCategories: Array.isArray(p.customCategories) ? p.customCategories : [],
+        calendarEvents: Array.isArray(p.calendarEvents) ? p.calendarEvents : [],
+        timerSessions: Array.isArray(p.timerSessions) ? p.timerSessions : [],
+      };
+
+      if (allowPassword) {
+        cleanProfile.password = p.password || (isAdmin ? '1511' : '1234');
+      } else {
+        delete cleanProfile.password;
+      }
+
+      return cleanProfile;
+    });
+
+  // In Dev Mode, ensure Belkin admin demo account is present
+  if (isDevMode) {
+    const adminIdx = sanitized.findIndex(p => (p.username && p.username.toLowerCase() === 'belkin') || (p.login && p.login.toLowerCase() === 'belkin') || p.id === 'user-admin-belkin');
+    if (adminIdx === -1) {
+      sanitized.unshift(DEFAULT_ADMIN_PROFILE);
+    } else {
+      sanitized[adminIdx].role = 'admin';
+      sanitized[adminIdx].login = 'Belkin';
+      sanitized[adminIdx].username = 'Belkin';
+      if (!sanitized[adminIdx].password) sanitized[adminIdx].password = '1511';
+      if (!Array.isArray(sanitized[adminIdx].feeds)) {
+        sanitized[adminIdx].feeds = [...ENGINEER_DEFAULT_FEEDS];
+      }
+    }
+
+    // Add missing test agent profiles in Dev mode automatically so they can be selected and tested
+    const requiredAgentIds = ['agent-mobile-repair', 'agent-culinary', 'agent-car-repair'];
+    requiredAgentIds.forEach(id => {
+      if (!sanitized.some(p => p.id === id)) {
+        const agentProfile = TEST_AGENTS_PROFILES.find(ap => ap.id === id);
+        if (agentProfile) {
+          sanitized.push(agentProfile);
+        }
+      }
+    });
+  }
+
+  return sanitized;
+}
+
 export function getStoredProfiles(): UserProfile[] {
   try {
     const raw = localStorage.getItem(STORAGE_PROFILES_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        const sanitized: UserProfile[] = parsed
-          .filter((p) => p && typeof p === 'object' && p.id)
-          .map((p) => {
-            const uName = String(p.username || p.login || 'Пользователь');
-            const uLogin = String(p.login || p.username || uName);
-            const uEmail = String(p.email || `${uLogin.toLowerCase()}@local.desk`);
-            const uDisplay = String(p.displayName || uName);
-            const isAdmin = uLogin.toLowerCase() === 'belkin' || p.id === 'user-admin-belkin';
-            
-            // Preserve user feeds and settings carefully!
-            const userFeeds = Array.isArray(p.feeds) ? p.feeds : ENGINEER_DEFAULT_FEEDS;
-            const style = p.appStyle || 'engineer';
-            const aiPrompt = p.customAiPrompt || DEFAULT_AI_PROMPTS[style] || DEFAULT_AI_PROMPTS.engineer;
-
-            return {
-              ...p,
-              username: uName,
-              login: uLogin,
-              email: uEmail,
-              displayName: uDisplay,
-              password: String(p.password || (isAdmin ? '1511' : '1234')),
-              role: (isAdmin ? 'admin' : (p.role || 'user')) as 'admin' | 'doctor' | 'user',
-              feeds: userFeeds,
-              appStyle: style,
-              customAiPrompt: aiPrompt,
-              notes: p.notes || [],
-              timers: Array.isArray(p.timers) ? p.timers : undefined,
-              scheduledHours: p.scheduledHours || [6, 12, 19],
-              workSchedules: p.workSchedules || {},
-              accessibility: p.accessibility || INITIAL_ACCESSIBILITY,
-            };
-          });
-
-        // Ensure Belkin admin is present but PRESERVE any custom feeds/prompt that Belkin set
-        const adminIdx = sanitized.findIndex(p => (p.username && p.username.toLowerCase() === 'belkin') || (p.login && p.login.toLowerCase() === 'belkin') || p.id === 'user-admin-belkin');
-        if (adminIdx === -1) {
-          sanitized.unshift(DEFAULT_ADMIN_PROFILE);
-        } else {
-          sanitized[adminIdx].role = 'admin';
-          sanitized[adminIdx].login = 'Belkin';
-          sanitized[adminIdx].username = 'Belkin';
-          if (!sanitized[adminIdx].password) sanitized[adminIdx].password = '1511';
-          // Ensure feeds are preserved
-          if (!Array.isArray(sanitized[adminIdx].feeds)) {
-            sanitized[adminIdx].feeds = [...ENGINEER_DEFAULT_FEEDS];
-          }
-        }
-
-        // Add missing test agent profiles automatically so they can be selected and tested
-        const requiredAgentIds = ['agent-mobile-repair', 'agent-culinary', 'agent-car-repair'];
-        let hasMissingAgents = false;
-        requiredAgentIds.forEach(id => {
-          if (!sanitized.some(p => p.id === id)) {
-            hasMissingAgents = true;
-            const agentProfile = TEST_AGENTS_PROFILES.find(ap => ap.id === id);
-            if (agentProfile) {
-              sanitized.push(agentProfile);
-            }
-          }
-        });
-        
-        // Save back with non-destructive merge
+        const sanitized = sanitizeProfiles(parsed);
         saveStoredProfiles(sanitized);
         return sanitized;
       }
@@ -561,14 +595,15 @@ export function getStoredProfiles(): UserProfile[] {
     console.warn('Failed to load profiles from local storage:', err);
   }
 
-  const initialList = [DEFAULT_ADMIN_PROFILE, ...TEST_AGENTS_PROFILES];
+  const defaultList = isDevMode ? [DEFAULT_ADMIN_PROFILE, ...TEST_AGENTS_PROFILES] : [];
+  const initialList = sanitizeProfiles(defaultList);
   saveStoredProfiles(initialList);
   return initialList;
 }
 
 export function saveStoredProfiles(profiles: UserProfile[]) {
   try {
-    if (!Array.isArray(profiles) || profiles.length === 0) return;
+    if (!Array.isArray(profiles)) return;
     localStorage.setItem(STORAGE_PROFILES_KEY, JSON.stringify(profiles));
   } catch (err) {
     console.warn('Failed to save profiles to local storage:', err);
@@ -633,7 +668,7 @@ export async function syncUserProfileToServer(user: UserProfile) {
   }
   const now = user.updatedAt;
 
-  // Save back to local storage profiles to ensure the local profile has this updatedAt!
+  // Save back to local storage profiles cache
   try {
     const raw = localStorage.getItem(STORAGE_PROFILES_KEY);
     if (raw) {
@@ -650,7 +685,7 @@ export async function syncUserProfileToServer(user: UserProfile) {
     console.warn('Failed to update local profile with updatedAt:', err);
   }
   
-  // Direct Cloud Firestore save (Unified Single Source of Truth in the Cloud)
+  // Direct Cloud Firestore save (Single Source of Truth)
   try {
     await saveUserProfileToFirestore(user);
   } catch (err) {
@@ -659,7 +694,8 @@ export async function syncUserProfileToServer(user: UserProfile) {
 }
 
 /**
- * Perform a full bidirectional synchronization between Cloud Firestore and LocalStorage
+ * Fetch profiles from Cloud Firestore and populate local cache.
+ * Cloud Firestore is the primary Single Source of Truth.
  */
 export async function syncAllProfilesWithFirestore(): Promise<UserProfile[]> {
   const localProfiles = getStoredProfiles();
@@ -667,92 +703,34 @@ export async function syncAllProfilesWithFirestore(): Promise<UserProfile[]> {
     const cloudProfiles = await loadAllProfilesFromFirestore();
     
     if (cloudProfiles && cloudProfiles.length > 0) {
-      // Map cloud profiles
       const mergedMap = new Map<string, UserProfile>();
       
-      // Add local first
+      // Seed local profiles (e.g., dev agents in dev mode)
       localProfiles.forEach(p => {
         if (p.id) mergedMap.set(p.id, p);
       });
 
-      // Merge cloud profiles (using updatedAt for robust conflict resolution)
+      // Firestore cloud profiles take strict precedence as single source of truth
       cloudProfiles.forEach(cp => {
         if (cp.id) {
           const existing = mergedMap.get(cp.id);
           if (existing) {
-            const cpTime = getTimestampMs(cp.updatedAt);
-            const existingTime = getTimestampMs(existing.updatedAt);
-
-            let mergedUser: UserProfile;
-
-            if (cpTime > existingTime) {
-              // Cloud is strictly newer, use Cloud as source of truth
-              mergedUser = {
-                ...existing,
-                ...cp
-              };
-            } else if (existingTime > cpTime) {
-              // Local is strictly newer (e.g. offline changes), use Local as source of truth
-              mergedUser = {
-                ...cp,
-                ...existing
-              };
-              // Push updated local state back to Firestore
-              saveUserProfileToFirestore(mergedUser).catch(() => {});
-            } else {
-              // Timestamps are equal or both missing, use a safe merge with Cloud taking precedence
-              const bestFeeds = Array.isArray(cp.feeds) ? cp.feeds : (Array.isArray(existing.feeds) ? existing.feeds : ENGINEER_DEFAULT_FEEDS);
-              const bestTimers = Array.isArray(cp.timers) ? cp.timers : (Array.isArray(existing.timers) ? existing.timers : INITIAL_MEDICAL_TIMERS);
-              const bestNotes = Array.isArray(cp.notes) ? cp.notes : (Array.isArray(existing.notes) ? existing.notes : INITIAL_MEDICAL_NOTES);
-
-              mergedUser = {
-                ...existing,
-                ...cp,
-                notes: bestNotes,
-                timers: bestTimers,
-                feeds: bestFeeds,
-                updatedAt: cp.updatedAt || existing.updatedAt || new Date().toISOString()
-              };
-              // Sync back to cloud to make sure cloud is updated
-              saveUserProfileToFirestore(mergedUser).catch(() => {});
-            }
-
-            mergedMap.set(cp.id, mergedUser);
+            mergedMap.set(cp.id, { ...existing, ...cp });
           } else {
             mergedMap.set(cp.id, cp);
           }
         }
       });
 
-      // Ensure Belkin admin is present
-      if (!mergedMap.has(DEFAULT_ADMIN_PROFILE.id)) {
-        const belkinFound = Array.from(mergedMap.values()).find(p => (p.username && p.username.toLowerCase() === 'belkin') || p.id === 'user-admin-belkin');
-        if (!belkinFound) {
-          mergedMap.set(DEFAULT_ADMIN_PROFILE.id, DEFAULT_ADMIN_PROFILE);
-          saveUserProfileToFirestore(DEFAULT_ADMIN_PROFILE).catch(() => {});
-        }
-      }
-
-      // Seed missing test agents in Cloud Firestore if they are missing from cloudProfiles
-      const cloudIds = new Set(cloudProfiles.map(p => p.id));
-      TEST_AGENTS_PROFILES.forEach(agent => {
-        if (!cloudIds.has(agent.id)) {
-          saveUserProfileToFirestore(agent).catch(() => {});
-        }
-      });
-
-      const mergedList = Array.from(mergedMap.values());
+      const mergedList = sanitizeProfiles(Array.from(mergedMap.values()));
       saveStoredProfiles(mergedList);
       return mergedList;
     } else {
-      // If Cloud Firestore is empty (e.g. initial setup), seed all current local profiles into Cloud Firestore
-      for (const p of localProfiles) {
-        saveUserProfileToFirestore(p).catch(() => {});
-      }
+      // Cloud Firestore returned 0 profiles or is uninitialized
       return localProfiles;
     }
   } catch (err) {
-    console.warn('Cloud Firestore sync note:', err);
+    console.warn('Cloud Firestore sync note (using local cache):', err);
     return localProfiles;
   }
 }

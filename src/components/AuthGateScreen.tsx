@@ -18,6 +18,12 @@ import { ENGINEER_DEFAULT_FEEDS, DEFAULT_AI_PROMPTS } from '../data/curatedFeeds
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth, saveUserProfileToFirestore } from '../utils/firebase';
 
+const isDevMode = typeof window !== 'undefined' && (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.includes('ais-dev')
+);
+
 interface AuthGateScreenProps {
   onAuthSuccess?: (userId: string) => void;
   onPlaySound?: (type: 'click' | 'success' | 'star') => void;
@@ -92,13 +98,13 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       onPlaySound?.('success');
       onAuthSuccess?.(uid);
     } catch (error: any) {
-      console.warn('Firebase login failed, checking legacy credentials:', error);
+      console.warn('Firebase login failed:', error);
 
-      // Legacy user migration check
+      // 1. One-time legacy migration (Category A)
       const legacyProfile = profiles.find(
         (p) => ((p.username && p.username.toLowerCase() === cleanLogin) || 
                (p.login && p.login.toLowerCase() === cleanLogin)) &&
-               p.password === loginPassword
+               p.password && p.password === loginPassword
       );
 
       if (legacyProfile) {
@@ -125,14 +131,41 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
           return;
         } catch (migrationErr: any) {
           console.error('Legacy migration to Firebase Auth failed:', migrationErr);
+          
+          if (migrationErr.code === 'auth/email-already-in-use') {
+            setLoginError('Этот аккаунт уже перенесен в облако. Войдите с помощью пароля Firebase.');
+          } else if (migrationErr.code === 'auth/network-request-failed') {
+            setLoginError('Для первой миграции аккаунта требуется интернет-соединение.');
+          } else {
+            setLoginError(`Ошибка переноса аккаунта в Firebase: ${migrationErr.message || migrationErr}`);
+          }
+          return;
         }
       }
 
-      // If migration fails or legacy user is not found, show error
+      // 2. Active Dev Mode bypass for system agents and demo users (Category B)
+      if (isDevMode) {
+        const demoProfile = profiles.find(
+          (p) => ((p.username && p.username.toLowerCase() === cleanLogin) || 
+                 (p.login && p.login.toLowerCase() === cleanLogin)) &&
+                 p.password === loginPassword &&
+                 (p.id.startsWith('agent-') || p.id === 'user-admin-belkin')
+        );
+        if (demoProfile) {
+          console.log('Dev Mode: bypass Firebase and log in directly using local demo credentials');
+          onPlaySound?.('success');
+          onAuthSuccess?.(demoProfile.id);
+          return;
+        }
+      }
+
+      // If migration or dev login is not applicable, display typical auth error
       if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
         setLoginError('Неверный пароль или логин');
       } else if (error.code === 'auth/user-not-found') {
         setLoginError('Пользователь с таким никнеймом или email не найден');
+      } else if (error.code === 'auth/network-request-failed') {
+        setLoginError('Ошибка сети. Проверьте интернет-соединение.');
       } else {
         setLoginError('Неверный логин/email или пароль');
       }
@@ -199,13 +232,59 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       onAuthSuccess?.(uid);
     } catch (error: any) {
       console.error('Firebase Auth registration failed:', error);
+
       if (error.code === 'auth/email-already-in-use') {
         setRegError('Этот никнейм или email уже занят');
+        return;
       } else if (error.code === 'auth/weak-password') {
         setRegError('Пароль должен быть не менее 6 символов');
-      } else {
-        setRegError('Ошибка регистрации в Firebase. ' + (error.message || ''));
+        return;
+      } else if (error.code === 'auth/network-request-failed') {
+        setRegError('Для регистрации необходимо подключение к интернету');
+        return;
       }
+
+      // If in Dev Mode, allow fallback to secure local registration (Category B)
+      if (isDevMode) {
+        const isFirstAdmin = profiles.length === 0 || cleanLogin.toLowerCase() === 'belkin';
+        const localUid = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const newProfile: UserProfile = {
+          id: localUid,
+          username: cleanLogin,
+          login: cleanLogin,
+          email: email,
+          password: regPassword, // Keep password for local fallback logins
+          displayName: cleanLogin,
+          role: isFirstAdmin ? 'admin' : 'user',
+          createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          notes: [],
+          timers: [],
+          feeds: [...ENGINEER_DEFAULT_FEEDS],
+          workSchedules: {},
+          accessibility: { scalePercent: 100, visualAcuity: 'Не указывать' },
+          appStyle: 'engineer',
+          customWallpaper: '',
+          customAiPrompt: DEFAULT_AI_PROMPTS.engineer,
+          scheduledHours: [6, 12, 19],
+        };
+
+        try {
+          await saveUserProfileToFirestore(newProfile);
+        } catch (fErr) {
+          console.warn('Could not save new local profile to Firestore:', fErr);
+        }
+
+        const nextProfiles = [...profiles, newProfile];
+        onSetProfiles(nextProfiles);
+
+        onPlaySound?.('success');
+        onAuthSuccess?.(localUid);
+        return;
+      }
+
+      setRegError(`Ошибка регистрации: ${error.message || error}`);
     }
   };
 

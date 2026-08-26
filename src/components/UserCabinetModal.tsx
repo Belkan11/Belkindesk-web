@@ -29,6 +29,12 @@ import { UserProfile, AppArchetypeStyle } from '../types';
 import { DEFAULT_WORKSPACE_CONFIG, saveAISettings } from '../utils/storage';
 import { DEFAULT_INITIAL_FEEDS } from '../data/curatedFeeds';
 
+const isDevMode = typeof window !== 'undefined' && (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.includes('ais-dev')
+);
+
 interface UserCabinetModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -296,7 +302,7 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
             <span>Редактирование профиля</span>
           </button>
 
-          {(currentUser?.role === 'admin' || currentUser?.username?.toLowerCase() === 'belkin') && (
+          {isDevMode && (currentUser?.role === 'admin' || currentUser?.username?.toLowerCase() === 'belkin') && (
             <button
               type="button"
               onClick={() => {
@@ -362,7 +368,7 @@ export const UserCabinetModal: React.FC<UserCabinetModalProps> = ({
             <span>Персональный ИИ (BYOK)</span>
           </button>
 
-          {(currentUser?.role === 'admin' || currentUser?.username?.toLowerCase() === 'belkin') && (
+          {isDevMode && (currentUser?.role === 'admin' || currentUser?.username?.toLowerCase() === 'belkin') && (
             <button
               type="button"
               onClick={() => {

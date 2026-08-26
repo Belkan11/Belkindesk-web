@@ -85,6 +85,30 @@ export async function loadAllProfilesFromFirestore(): Promise<UserProfile[]> {
  */
 export async function saveUserProfileToFirestore(user: UserProfile): Promise<void> {
   if (!user || !user.id) return;
+
+  const currentUser = auth.currentUser;
+  const isDevMode = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.includes('ais-dev')
+  );
+
+  const isDemoProfile = user.id === 'user-admin-belkin' || user.id.startsWith('agent-');
+
+  if (!isDevMode) {
+    // Production: Strictly enforce firebaseUser != null and userId === firebaseUser.uid
+    if (!currentUser || currentUser.uid !== user.id) {
+      console.warn(`[Firestore Guard] Blocked unauthorized save to /users/${user.id} in production. Auth UID: ${currentUser?.uid}`);
+      return;
+    }
+  } else {
+    // Dev Mode: Allow saving authenticated user or demo profiles
+    if (!isDemoProfile && currentUser && currentUser.uid !== user.id) {
+      console.warn(`[Firestore Guard Dev] Blocked save to /users/${user.id}. Auth UID: ${currentUser?.uid}`);
+      return;
+    }
+  }
+
   try {
     const userDocRef = doc(db, 'users', user.id);
     const payload = { ...user };
@@ -127,7 +151,34 @@ export async function saveBackupSnapshotToFirestore(backupData: Record<string, u
 }
 
 /**
- * Realtime listener for all user profiles in Firestore
+ * Realtime listener for a SINGLE user profile in Firestore
+ */
+export function subscribeToUserProfile(userId: string, onUpdate: (profile: UserProfile) => void): () => void {
+  if (!userId) return () => {};
+  try {
+    const userDocRef = doc(db, 'users', userId);
+    return onSnapshot(
+      userDocRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data && typeof data === 'object' && data.id) {
+            onUpdate(data as UserProfile);
+          }
+        }
+      },
+      (err) => {
+        logFirestoreError('SNAPSHOT_USER', `users/${userId}`, err);
+      }
+    );
+  } catch (err) {
+    logFirestoreError('SUBSCRIBE_USER', `users/${userId}`, err);
+    return () => {};
+  }
+}
+
+/**
+ * Realtime listener for all user profiles in Firestore (Dev/Admin Mode only)
  */
 export function subscribeToAllProfiles(onUpdate: (profiles: UserProfile[]) => void): () => void {
   try {
@@ -158,21 +209,28 @@ export function subscribeToAllProfiles(onUpdate: (profiles: UserProfile[]) => vo
   }
 }
 
+export interface FirestoreUserLoadResult {
+  data: UserProfile | null;
+  exists: boolean;
+  error?: any;
+}
+
 /**
- * Legacy/Helper: Load a single user data doc
+ * Helper: Load a single user data doc with existence & error distinction
  */
-export async function loadUserDataFromFirestore(userId: string): Promise<UserProfile | null> {
-  if (!userId) return null;
+export async function loadUserDataFromFirestore(userId: string): Promise<FirestoreUserLoadResult> {
+  if (!userId) return { data: null, exists: false };
   try {
     const userDocRef = doc(db, 'users', userId);
     const snap = await getDoc(userDocRef);
     if (snap.exists()) {
-      return snap.data() as UserProfile;
+      return { data: snap.data() as UserProfile, exists: true };
     }
+    return { data: null, exists: false };
   } catch (err) {
     logFirestoreError('GET_USER', `users/${userId}`, err);
+    return { data: null, exists: false, error: err };
   }
-  return null;
 }
 
 // Legacy stubs removed as authentication is fully integrated into AuthGateScreen using native Firebase SDK

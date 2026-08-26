@@ -25,6 +25,12 @@ import {
 } from 'lucide-react';
 import { UserProfile, MedicalNote, MedicalTimerItem, AccessibilityConfig, AppArchetypeStyle } from '../types';
 
+const isDevMode = typeof window !== 'undefined' && (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.includes('ais-dev')
+);
+
 interface AdminPanelModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -472,19 +478,25 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             <div className="text-slate-200">@{p.username}</div>
                             {isEditing ? (
                               <div className="flex items-center gap-1 mt-1">
-                                <Key className="w-3 h-3 text-[#ffcc00]" />
-                                <input
-                                  type="text"
-                                  value={editPassword}
-                                  onChange={(e) => setEditPassword(e.target.value)}
-                                  placeholder="Пароль"
-                                  className="bg-[#1b2230] border border-[#ffcc00] rounded px-1.5 py-0.5 text-[11px] text-white w-24"
-                                />
+                                {isDevMode && (p.id.startsWith('usr_') || p.id.startsWith('agent-') || p.id === 'user-admin-belkin') ? (
+                                  <>
+                                    <Key className="w-3 h-3 text-[#ffcc00]" />
+                                    <input
+                                      type="text"
+                                      value={editPassword}
+                                      onChange={(e) => setEditPassword(e.target.value)}
+                                      placeholder="Пароль"
+                                      className="bg-[#1b2230] border border-[#ffcc00] rounded px-1.5 py-0.5 text-[11px] text-white w-24"
+                                    />
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] text-emerald-400 font-sans">Защищено Firebase</span>
+                                )}
                               </div>
                             ) : (
                               <div className="text-[10px] text-slate-500 flex items-center gap-1">
                                 <Lock className="w-3 h-3" />
-                                {p.password ? `Пароль: ${p.password}` : 'Пароль защищен'}
+                                {p.password ? `Пароль: ${p.password}` : 'Пароль защищен (Firebase)'}
                               </div>
                             )}
                           </td>

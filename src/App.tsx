@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './utils/firebase';
 import { HeartPulse } from 'lucide-react';
 import { 
@@ -15,6 +15,7 @@ import {
 } from './types';
 import { 
   getStoredProfiles, 
+  sanitizeProfiles, 
   saveStoredProfiles, 
   getActiveSessionUserId, 
   saveActiveSessionUserId, 
@@ -42,6 +43,7 @@ import {
   deleteUserProfileFromFirestore, 
   saveBackupSnapshotToFirestore, 
   subscribeToAllProfiles,
+  subscribeToUserProfile,
   loadUserDataFromFirestore
 } from './utils/firebase';
 
@@ -63,41 +65,72 @@ export default function App() {
   // Profiles and user state
   const [profiles, setProfiles] = useState<UserProfile[]>(() => getStoredProfiles());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => getActiveSessionUserId());
-  const [isProfileLoading, setIsProfileLoading] = useState<boolean>(() => !!getActiveSessionUserId());
+  const [isProfileLoading, setIsProfileLoading] = useState<boolean>(true);
+  const [profileLoadStatus, setProfileLoadStatus] = useState<'idle' | 'loading' | 'found' | 'not_found' | 'error'>('idle');
   
   // Firebase Auth state
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
+  const isDevMode = useMemo(() => {
+    return typeof window !== 'undefined' && (
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.includes('ais-dev')
+    );
+  }, []);
+
   useEffect(() => {
     return onAuthStateChanged(auth, (user) => {
       setFirebaseUser(user);
+      if (user) {
+        // Firebase Auth is the absolute Single Source of Truth
+        setActiveSessionId(user.uid);
+        saveActiveSessionUserId(user.uid);
+      } else {
+        // In production, we strictly forbid any local/legacy sessions.
+        // We only allow local/legacy demo sessions (like 'user-admin-belkin' or 'agent-*') in Dev/Demo mode.
+        const currentActive = getActiveSessionUserId();
+        const isLegacyOrLocal = currentActive && (
+          currentActive.startsWith('usr_') ||
+          currentActive.startsWith('agent-') ||
+          currentActive === 'user-admin-belkin'
+        );
+        
+        if (isLegacyOrLocal && isDevMode) {
+          setActiveSessionId(currentActive);
+        } else {
+          setActiveSessionId(null);
+          saveActiveSessionUserId(null);
+        }
+      }
       setAuthLoading(false);
     });
-  }, []);
+  }, [isDevMode]);
 
   // Active current user profile
   const currentUser = useMemo<UserProfile | null>(() => {
-    return profiles.find((p) => p.id === activeSessionId) || null;
-  }, [profiles, activeSessionId]);
+    const effectiveActiveId = firebaseUser ? firebaseUser.uid : activeSessionId;
+    return profiles.find((p) => p.id === effectiveActiveId) || null;
+  }, [profiles, activeSessionId, firebaseUser]);
 
   const [activeTab, setActiveTab] = useState<'notes' | 'news'>('news');
-  const [notes, setNotes] = useState<MedicalNote[]>(() => currentUser?.notes || getStoredMedicalNotes());
-  const [timers, setTimers] = useState<MedicalTimerItem[]>(() => currentUser?.timers || getStoredMedicalTimers(getActiveSessionUserId() || undefined));
-  const [bookmarks, setBookmarks] = useState<DesktopBookmark[]>(() => currentUser?.bookmarks || getStoredBookmarks());
-  const [accessibility, setAccessibility] = useState<AccessibilityConfig>(() => currentUser?.accessibility || getStoredAccessibility());
+  const [notes, setNotes] = useState<MedicalNote[]>(() => currentUser?.notes ?? getStoredMedicalNotes());
+  const [timers, setTimers] = useState<MedicalTimerItem[]>(() => currentUser?.timers ?? getStoredMedicalTimers(getActiveSessionUserId() || undefined));
+  const [bookmarks, setBookmarks] = useState<DesktopBookmark[]>(() => currentUser?.bookmarks ?? getStoredBookmarks());
+  const [accessibility, setAccessibility] = useState<AccessibilityConfig>(() => currentUser?.accessibility ?? getStoredAccessibility());
 
   // Workspace Customization State (Style, Wallpaper, Custom Prompt, 3x/Day Schedule)
-  const [appStyle, setAppStyle] = useState<AppArchetypeStyle>(() => currentUser?.appStyle || 'engineer');
-  const [customWallpaper, setCustomWallpaper] = useState<string>(() => currentUser?.customWallpaper || '');
-  const [customAiPrompt, setCustomAiPrompt] = useState<string>(() => currentUser?.customAiPrompt || DEFAULT_AI_PROMPTS.engineer);
+  const [appStyle, setAppStyle] = useState<AppArchetypeStyle>(() => currentUser?.appStyle ?? 'engineer');
+  const [customWallpaper, setCustomWallpaper] = useState<string>(() => currentUser?.customWallpaper ?? '');
+  const [customAiPrompt, setCustomAiPrompt] = useState<string>(() => currentUser?.customAiPrompt ?? DEFAULT_AI_PROMPTS.engineer);
   const [enableAutoAiProcessing, setEnableAutoAiProcessing] = useState<boolean>(() => currentUser?.enableAutoAiProcessing ?? false);
-  const [scheduledHours, setScheduledHours] = useState<number[]>(() => currentUser?.scheduledHours || [6, 12, 19]);
-  const [lastScheduledRunDate, setLastScheduledRunDate] = useState<string>(() => currentUser?.lastScheduledRunDate || '');
+  const [scheduledHours, setScheduledHours] = useState<number[]>(() => currentUser?.scheduledHours ?? [6, 12, 19]);
+  const [lastScheduledRunDate, setLastScheduledRunDate] = useState<string>(() => currentUser?.lastScheduledRunDate ?? '');
   const [lastScheduledSlot, setLastScheduledSlot] = useState<number | undefined>(() => currentUser?.lastScheduledSlot);
 
   // Feeds and Articles (User-isolated)
-  const [feeds, setFeeds] = useState<FeedConfig[]>(() => currentUser?.feeds || ENGINEER_DEFAULT_FEEDS);
+  const [feeds, setFeeds] = useState<FeedConfig[]>(() => currentUser?.feeds ?? ENGINEER_DEFAULT_FEEDS);
   const [articles, setArticles] = useState<Article[]>(() => getStoredArticles(getActiveSessionUserId() || undefined));
   const [activeFeedId, setActiveFeedId] = useState<string | null>(null);
   const [isStarredFilter, setIsStarredFilter] = useState(false);
@@ -159,109 +192,76 @@ export default function App() {
     }
   }, []);
 
-  // Initial Firestore Cloud Database Synchronization & Live Realtime Subscription
+  // Single Unified Workspace Load & Realtime Subscription for Active Profile
   useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
+    if (authLoading) {
+      return;
+    }
 
-    const initDb = async () => {
-      try {
-        const synced = await syncAllProfilesWithFirestore();
-        if (synced && synced.length > 0) {
-          setProfiles(synced);
-        }
-      } catch (err) {
-        console.warn('Initial Firestore database sync notice:', err);
-      }
-
-      // Setup realtime listener so multiple devices or tabs stay perfectly synchronized
-      try {
-        unsubscribe = subscribeToAllProfiles((cloudProfiles) => {
-          if (cloudProfiles && cloudProfiles.length > 0) {
-            setProfiles((prev) => {
-              const map = new Map<string, UserProfile>();
-              prev.forEach(p => map.set(p.id, p));
-              cloudProfiles.forEach(cp => {
-                const existing = map.get(cp.id);
-                if (existing) {
-                  const cpTime = getTimestampMs(cp.updatedAt);
-                  const existingTime = getTimestampMs(existing.updatedAt);
-                  if (cpTime > existingTime) {
-                    map.set(cp.id, { ...existing, ...cp });
-                  } else if (existingTime > cpTime) {
-                    // Local is newer, keep existing and skip CP
-                  } else {
-                    map.set(cp.id, { ...existing, ...cp });
-                  }
-                } else {
-                  map.set(cp.id, cp);
-                }
-              });
-              const next = Array.from(map.values());
-              saveStoredProfiles(next);
-              return next;
-            });
-          }
-        });
-      } catch (err) {
-        console.warn('Firestore subscription notice:', err);
-      }
-    };
-
-    initDb();
-
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, []);
-
-  // Load and Restore User Profile from Firestore on startup (F5) or user login
-  useEffect(() => {
-    if (!activeSessionId) {
+    const effectiveId = firebaseUser ? firebaseUser.uid : (isDevMode ? activeSessionId : null);
+    if (!effectiveId) {
       setIsProfileLoading(false);
+      setProfileLoadStatus('idle');
       return;
     }
 
     let isMounted = true;
-    const loadProfile = async () => {
+    let unsubscribe: (() => void) | undefined;
+
+    const loadProfileAndListen = async () => {
       setIsProfileLoading(true);
+      setProfileLoadStatus('loading');
       try {
-        const cloudUser = await loadUserDataFromFirestore(activeSessionId);
+        const { data: cloudUser, exists, error } = await loadUserDataFromFirestore(effectiveId);
         if (!isMounted) return;
 
-        if (cloudUser) {
-          // Sync with Firestore profile
+        if (exists && cloudUser) {
+          setProfileLoadStatus('found');
+          // Single Source of Truth: Update state with Cloud Firestore profile
           setProfiles((prev) => {
-            const existsIndex = prev.findIndex(p => p.id === activeSessionId);
+            const existsIndex = prev.findIndex(p => p.id === effectiveId);
             let updatedProfiles: UserProfile[];
             if (existsIndex >= 0) {
               const existing = prev[existsIndex];
-              const cpTime = getTimestampMs(cloudUser.updatedAt);
-              const existingTime = getTimestampMs(existing.updatedAt);
-              
-              if (existingTime > cpTime) {
-                // Local is strictly newer (e.g. offline edits), use local and sync up to Firestore
-                updatedProfiles = [...prev];
-                syncUserProfileToServer(existing).catch(() => {});
-              } else {
-                // Cloud is newer or equal, use Cloud as source of truth
-                const merged = { ...existing, ...cloudUser };
-                updatedProfiles = [...prev];
-                updatedProfiles[existsIndex] = merged;
-              }
+              updatedProfiles = [...prev];
+              updatedProfiles[existsIndex] = { ...existing, ...cloudUser };
             } else {
               updatedProfiles = [...prev, cloudUser];
             }
-            saveStoredProfiles(updatedProfiles);
-            return updatedProfiles;
+            const sanitized = sanitizeProfiles(updatedProfiles);
+            saveStoredProfiles(sanitized);
+            return sanitized;
           });
+
+          // Subscribe strictly to this user's document /users/{effectiveId}
+          unsubscribe = subscribeToUserProfile(effectiveId, (updatedCloudUser) => {
+            if (!isMounted || !updatedCloudUser) return;
+            setProfiles((prev) => {
+              const idx = prev.findIndex(p => p.id === effectiveId);
+              let updated: UserProfile[];
+              if (idx >= 0) {
+                updated = [...prev];
+                updated[idx] = { ...prev[idx], ...updatedCloudUser };
+              } else {
+                updated = [...prev, updatedCloudUser];
+              }
+              const sanitized = sanitizeProfiles(updated);
+              saveStoredProfiles(sanitized);
+              return sanitized;
+            });
+          });
+        } else if (!exists && !error) {
+          // Confirmed document does NOT exist on Firestore
+          setProfileLoadStatus('not_found');
         } else {
-          // Profile not found in Cloud Firestore. If it exists locally, sync it up
-          const localUser = profiles.find(p => p.id === activeSessionId);
-          if (localUser) {
-            syncUserProfileToServer(localUser).catch(() => {});
-          }
+          // OFFLINE / LOAD_ERROR: Firestore unavailable
+          setProfileLoadStatus('error');
+          console.warn('Firestore load error, relying on local offline cache fallback without pushing to server.');
         }
       } catch (err) {
+        if (isMounted) {
+          setProfileLoadStatus('error');
+        }
         console.warn('Firestore load profile failed, using local offline fallback:', err);
       } finally {
         if (isMounted) {
@@ -270,30 +270,108 @@ export default function App() {
       }
     };
 
-    loadProfile();
+    loadProfileAndListen();
 
     return () => {
       isMounted = false;
+      if (unsubscribe) unsubscribe();
     };
-  }, [activeSessionId]);
+  }, [authLoading, firebaseUser, activeSessionId, isDevMode]);
+
+  // Dev/Admin mode only: Realtime subscribe to all profiles when Admin Panel is open
+  useEffect(() => {
+    if (!isAdminPanelOpen || !isDevMode) return;
+    const unsubscribe = subscribeToAllProfiles((cloudProfiles) => {
+      if (cloudProfiles && cloudProfiles.length > 0) {
+        setProfiles((prev) => {
+          const map = new Map<string, UserProfile>();
+          prev.forEach(p => map.set(p.id, p));
+          cloudProfiles.forEach(cp => map.set(cp.id, cp));
+          const sanitized = sanitizeProfiles(Array.from(map.values()));
+          saveStoredProfiles(sanitized);
+          return sanitized;
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, [isAdminPanelOpen, isDevMode]);
+
+  // Proactively auto-create a user profile locally & in Firestore if Firebase user exists but profile isn't found
+  useEffect(() => {
+    const effectiveId = firebaseUser?.uid;
+    if (effectiveId && !isProfileLoading && profileLoadStatus === 'not_found') {
+      const exists = profiles.some(p => p.id === effectiveId);
+      if (!exists) {
+        const email = firebaseUser.email || `${effectiveId}@local.desk`;
+        const displayName = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Пользователь';
+        const isBelkin = displayName.toLowerCase() === 'belkin' || effectiveId === 'user-admin-belkin';
+
+        const newProfile: UserProfile = {
+          id: effectiveId,
+          username: displayName,
+          login: displayName,
+          email: email,
+          displayName: displayName,
+          role: isBelkin ? 'admin' : 'user',
+          createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          notes: [],
+          timers: [],
+          feeds: [...ENGINEER_DEFAULT_FEEDS],
+          workSchedules: {},
+          accessibility: { scalePercent: 100, visualAcuity: 'Не указывать' },
+          appStyle: 'engineer',
+          customWallpaper: '',
+          customAiPrompt: DEFAULT_AI_PROMPTS.engineer,
+          scheduledHours: [6, 12, 19],
+        };
+
+        setProfiles(prev => {
+          if (prev.some(p => p.id === effectiveId)) return prev;
+          const next = [...prev, newProfile];
+          saveStoredProfiles(next);
+          return next;
+        });
+
+        syncUserProfileToServer(newProfile).catch(() => {});
+      }
+    }
+  }, [firebaseUser, profiles, isProfileLoading, profileLoadStatus]);
 
   // Sync state when active user changes
   useEffect(() => {
     if (currentUser && !isProfileLoading) {
-      setNotes(currentUser.notes || getStoredMedicalNotes());
-      setTimers(currentUser.timers || getStoredMedicalTimers(currentUser.id));
-      setBookmarks(currentUser.bookmarks || getStoredBookmarks());
-      setFeeds(currentUser.feeds || ENGINEER_DEFAULT_FEEDS);
-      setWorkSchedules(currentUser.workSchedules || {});
-      setAccessibility(currentUser.accessibility || getStoredAccessibility());
-      setAppStyle(currentUser.appStyle || 'engineer');
-      setCustomWallpaper(currentUser.customWallpaper || '');
-      setCustomAiPrompt(currentUser.customAiPrompt || DEFAULT_AI_PROMPTS[currentUser.appStyle || 'engineer'] || DEFAULT_AI_PROMPTS.engineer);
+      setNotes(currentUser.notes ?? getStoredMedicalNotes());
+      setTimers(currentUser.timers ?? getStoredMedicalTimers(currentUser.id));
+      setBookmarks(currentUser.bookmarks ?? getStoredBookmarks());
+      setFeeds(currentUser.feeds ?? ENGINEER_DEFAULT_FEEDS);
+      setWorkSchedules(currentUser.workSchedules ?? {});
+      setAccessibility(currentUser.accessibility ?? getStoredAccessibility());
+      setAppStyle(currentUser.appStyle ?? 'engineer');
+      setCustomWallpaper(currentUser.customWallpaper ?? '');
+      setCustomAiPrompt(currentUser.customAiPrompt ?? DEFAULT_AI_PROMPTS[currentUser.appStyle ?? 'engineer'] ?? DEFAULT_AI_PROMPTS.engineer);
       setEnableAutoAiProcessing(currentUser.enableAutoAiProcessing ?? false);
-      setScheduledHours(currentUser.scheduledHours || [6, 12, 19]);
-      setLastScheduledRunDate(currentUser.lastScheduledRunDate || '');
+      setScheduledHours(currentUser.scheduledHours ?? [6, 12, 19]);
+      setLastScheduledRunDate(currentUser.lastScheduledRunDate ?? '');
       setLastScheduledSlot(currentUser.lastScheduledSlot);
       setArticles(getStoredArticles(currentUser.id));
+    } else if (!currentUser) {
+      // Clear/Reset all user-isolated workspace states immediately to prevent ANY leakage or transient data display
+      setNotes([]);
+      setTimers([]);
+      setBookmarks([]);
+      setFeeds(ENGINEER_DEFAULT_FEEDS);
+      setWorkSchedules({});
+      setAccessibility({ scalePercent: 100, visualAcuity: 'Не указывать' });
+      setAppStyle('engineer');
+      setCustomWallpaper('');
+      setCustomAiPrompt(DEFAULT_AI_PROMPTS.engineer);
+      setEnableAutoAiProcessing(false);
+      setScheduledHours([6, 12, 19]);
+      setLastScheduledRunDate('');
+      setLastScheduledSlot(undefined);
+      setArticles([]);
     }
   }, [currentUser?.id, currentUser?.updatedAt, isProfileLoading]);
 
@@ -712,114 +790,34 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentUser, checkAndRunSchedule, isProfileLoading]);
 
-  // LOGIN HANDLER
-  const handleLogin = (identifier: string, pass: string): { success: boolean; error?: string } => {
-    const cleanId = identifier.trim().toLowerCase();
-    const cleanPass = pass.trim();
-
-    const found = profiles.find((p) => {
-      const pLogin = (p.login || p.username || '').trim().toLowerCase();
-      const pEmail = (p.email || '').trim().toLowerCase();
-      return (pLogin === cleanId || pEmail === cleanId) && p.password === cleanPass;
-    });
-
-    if (!found) {
-      return { success: false, error: 'Неверный логин/email или пароль' };
+  // LOGOUT HANDLER
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.warn('Firebase signOut failed:', err);
     }
+    // Explicitly reset Firebase state and local session identifiers
+    setFirebaseUser(null);
+    setActiveSessionId(null);
+    clearActiveSessionUserId();
 
-    const updatedUser = { ...found, lastLoginAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-    const nextProfiles = profiles.map((p) => (p.id === found.id ? updatedUser : p));
-    setProfiles(nextProfiles);
-    saveStoredProfiles(nextProfiles);
-
-    setActiveSessionId(found.id);
-    saveActiveSessionUserId(found.id);
-
-    setNotes(found.notes || []);
-    setTimers(found.timers || []);
-    setFeeds(found.feeds || ENGINEER_DEFAULT_FEEDS);
-    setWorkSchedules(found.workSchedules || {});
-    setAccessibility(found.accessibility || { scalePercent: 100, visualAcuity: 'Не указывать' });
-    setAppStyle(found.appStyle || 'engineer');
-    setCustomWallpaper(found.customWallpaper || '');
-    setCustomAiPrompt(found.customAiPrompt || DEFAULT_AI_PROMPTS[found.appStyle || 'engineer'] || DEFAULT_AI_PROMPTS.engineer);
-    setScheduledHours(found.scheduledHours || [6, 12, 19]);
-
-    syncUserProfileToServer(updatedUser);
-    playUiSound('success');
-    return { success: true };
-  };
-
-  // REGISTER HANDLER
-  const handleRegister = (
-    login: string,
-    email: string,
-    pass: string,
-    name?: string,
-    specialty?: string
-  ): { success: boolean; error?: string } => {
-    const cleanLogin = login.trim();
-    const cleanEmail = email.trim();
-    const cleanPass = pass.trim();
-
-    if (profiles.some((p) => (p.login || p.username || '').toLowerCase() === cleanLogin.toLowerCase())) {
-      return { success: false, error: 'Пользователь с таким логином уже существует' };
-    }
-    if (profiles.some((p) => (p.email || '').toLowerCase() === cleanEmail.toLowerCase())) {
-      return { success: false, error: 'Пользователь с таким email уже зарегистрирован' };
-    }
-
-    const isFirstAdmin = profiles.length === 0 || cleanLogin.toLowerCase() === 'belkin';
-    const newProfile: UserProfile = {
-      id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      username: cleanLogin,
-      login: cleanLogin,
-      email: cleanEmail,
-      password: cleanPass,
-      displayName: name?.trim() || cleanLogin,
-      role: isFirstAdmin ? 'admin' : 'user',
-      specialty: specialty?.trim() || 'Инженер-электроник',
-      specialization: specialty?.trim() || 'Инженер-электроник',
-      createdAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      notes: getStoredMedicalNotes(),
-      timers: getStoredMedicalTimers(),
-      feeds: ENGINEER_DEFAULT_FEEDS,
-      workSchedules: {},
-      accessibility: { scalePercent: 100, visualAcuity: 'Не указывать' },
-      appStyle: 'engineer',
-      customWallpaper: '',
-      customAiPrompt: DEFAULT_AI_PROMPTS.engineer,
-      scheduledHours: [6, 12, 19],
-    };
-
-    const nextProfiles = [...profiles, newProfile];
-    setProfiles(nextProfiles);
-    saveStoredProfiles(nextProfiles);
-
-    setActiveSessionId(newProfile.id);
-    saveActiveSessionUserId(newProfile.id);
-
-    setNotes(newProfile.notes || []);
-    setTimers(newProfile.timers || []);
-    setFeeds(newProfile.feeds);
+    // Immediately clear all user-isolated states to prevent ANY flash or leaking of User A's data
+    setNotes([]);
+    setTimers([]);
+    setBookmarks([]);
+    setFeeds(ENGINEER_DEFAULT_FEEDS);
     setWorkSchedules({});
-    setAccessibility(newProfile.accessibility || { scalePercent: 100, visualAcuity: 'Не указывать' });
+    setAccessibility({ scalePercent: 100, visualAcuity: 'Не указывать' });
     setAppStyle('engineer');
     setCustomWallpaper('');
     setCustomAiPrompt(DEFAULT_AI_PROMPTS.engineer);
+    setEnableAutoAiProcessing(false);
     setScheduledHours([6, 12, 19]);
+    setLastScheduledRunDate('');
+    setLastScheduledSlot(undefined);
+    setArticles([]);
 
-    syncUserProfileToServer(newProfile);
-    playUiSound('success');
-    return { success: true };
-  };
-
-  // LOGOUT HANDLER
-  const handleLogout = () => {
-    setActiveSessionId(null);
-    clearActiveSessionUserId();
     playUiSound('click');
   };
 
@@ -986,6 +984,55 @@ export default function App() {
     }
   };
 
+  const handleSaveAllWorkspaceSettings = (updates: Partial<UserProfile>) => {
+    if (!currentUser?.id) return;
+
+    // 1. Build the updated profile immediately
+    const updatedUser: UserProfile = {
+      ...currentUser,
+      ...updates,
+      updatedAt: new Date().toISOString()
+    };
+
+    // 2. Synchronously update all individual states in React
+    if (updates.feeds !== undefined) {
+      setFeeds(updates.feeds);
+    }
+    if (updates.timers !== undefined) {
+      setTimers(updates.timers);
+      saveStoredMedicalTimers(updates.timers, currentUser.id);
+    }
+    if (updates.accessibility !== undefined) {
+      setAccessibility(updates.accessibility);
+      saveStoredAccessibility(updates.accessibility);
+    }
+    if (updates.customAiPrompt !== undefined) {
+      setCustomAiPrompt(updates.customAiPrompt);
+    }
+    if (updates.appStyle !== undefined) {
+      setAppStyle(updates.appStyle);
+    }
+    if (updates.customWallpaper !== undefined) {
+      setCustomWallpaper(updates.customWallpaper);
+    }
+    if (updates.scheduledHours !== undefined) {
+      setScheduledHours(updates.scheduledHours);
+    }
+    if (updates.enableAutoAiProcessing !== undefined) {
+      setEnableAutoAiProcessing(updates.enableAutoAiProcessing);
+    }
+
+    // 3. Update the global list of profiles in state & localStorage
+    const nextProfiles = profiles.map((p) => (p.id === currentUser.id ? updatedUser : p));
+    setProfiles(nextProfiles);
+    saveStoredProfiles(nextProfiles);
+
+    // 4. Send a single sync/save request to the server
+    syncUserProfileToServer(updatedUser).catch((err) => {
+      console.error('Failed to sync updated workspace settings:', err);
+    });
+  };
+
   // User Profile & Cabinet Handlers
   const handleSaveProfile = (updatedProfile: UserProfile) => {
     const profileWithTime = { ...updatedProfile, updatedAt: new Date().toISOString() };
@@ -995,30 +1042,55 @@ export default function App() {
     syncUserProfileToServer(profileWithTime);
   };
 
-  const handleCreateUser = (newUser: UserProfile) => {
+  const handleCreateUser = async (newUser: UserProfile) => {
+    if (!isDevMode) {
+      console.warn('Creating local profiles without Firebase Auth is forbidden in production.');
+      return;
+    }
     const userWithTime = { ...newUser, updatedAt: new Date().toISOString() };
     const nextProfiles = [...profiles, userWithTime];
     setProfiles(nextProfiles);
     saveStoredProfiles(nextProfiles);
+
+    if (firebaseUser && firebaseUser.uid !== userWithTime.id) {
+      try {
+        await signOut(auth);
+      } catch (err) {
+        console.warn('Firebase signOut on user create failed:', err);
+      }
+    }
+
     setActiveSessionId(userWithTime.id);
     saveActiveSessionUserId(userWithTime.id);
     syncUserProfileToServer(userWithTime);
   };
 
-  const handleSelectUser = (userId: string) => {
+  const handleSelectUser = async (userId: string) => {
+    if (!isDevMode && firebaseUser && firebaseUser.uid !== userId) {
+      console.warn('Profile switching without authentication is forbidden in production.');
+      return;
+    }
     const target = profiles.find((p) => p.id === userId);
     if (target) {
+      if (firebaseUser && firebaseUser.uid !== target.id) {
+        try {
+          await signOut(auth);
+        } catch (err) {
+          console.warn('Firebase signOut on user select failed:', err);
+        }
+      }
+
       setActiveSessionId(target.id);
       saveActiveSessionUserId(target.id);
-      setNotes(target.notes || []);
-      setTimers(target.timers || INITIAL_MEDICAL_TIMERS);
-      setFeeds(target.feeds || ENGINEER_DEFAULT_FEEDS);
-      setWorkSchedules(target.workSchedules || {});
-      setAccessibility(target.accessibility || { scalePercent: 100, visualAcuity: 'Не указывать' });
-      setAppStyle(target.appStyle || 'engineer');
-      setCustomWallpaper(target.customWallpaper || '');
-      setCustomAiPrompt(target.customAiPrompt || DEFAULT_AI_PROMPTS[target.appStyle || 'engineer'] || DEFAULT_AI_PROMPTS.engineer);
-      setScheduledHours(target.scheduledHours || [6, 12, 19]);
+      setNotes(target.notes ?? []);
+      setTimers(target.timers ?? INITIAL_MEDICAL_TIMERS);
+      setFeeds(target.feeds ?? ENGINEER_DEFAULT_FEEDS);
+      setWorkSchedules(target.workSchedules ?? {});
+      setAccessibility(target.accessibility ?? { scalePercent: 100, visualAcuity: 'Не указывать' });
+      setAppStyle(target.appStyle ?? 'engineer');
+      setCustomWallpaper(target.customWallpaper ?? '');
+      setCustomAiPrompt(target.customAiPrompt ?? DEFAULT_AI_PROMPTS[target.appStyle ?? 'engineer'] ?? DEFAULT_AI_PROMPTS.engineer);
+      setScheduledHours(target.scheduledHours ?? [6, 12, 19]);
       setArticles(getStoredArticles(target.id));
     }
   };
@@ -1038,14 +1110,15 @@ export default function App() {
 
 
   useEffect(() => {
-    if (!activeSessionId || isProfileLoading) return;
+    const effectiveId = firebaseUser ? firebaseUser.uid : activeSessionId;
+    if (!effectiveId || isProfileLoading) return;
     
     // Function to ping
     const ping = () => {
       setProfiles(prev => {
-        const next = prev.map(p => p.id === activeSessionId ? { ...p, lastActiveAt: new Date().toISOString() } : p);
+        const next = prev.map(p => p.id === effectiveId ? { ...p, lastActiveAt: new Date().toISOString() } : p);
         saveStoredProfiles(next);
-        const activeProfile = next.find(p => p.id === activeSessionId);
+        const activeProfile = next.find(p => p.id === effectiveId);
         if (activeProfile) syncUserProfileToServer(activeProfile);
         return next;
       });
@@ -1054,7 +1127,7 @@ export default function App() {
     ping();
     const interval = setInterval(ping, 60000);
     return () => clearInterval(interval);
-  }, [activeSessionId, isProfileLoading]);
+  }, [firebaseUser, activeSessionId, isProfileLoading]);
 
 
   const handleDeleteUserProfile = (userId: string) => {
@@ -1083,8 +1156,10 @@ export default function App() {
     }
   };
 
-  // Show loading screen while profile is being fetched from Firestore or local fallback
-  if (activeSessionId && isProfileLoading) {
+  const effectiveActiveId = firebaseUser ? firebaseUser.uid : activeSessionId;
+
+  // Show loading screen while Firebase Auth is resolving OR while profile is being fetched from Firestore or local fallback
+  if (authLoading || (effectiveActiveId && isProfileLoading)) {
     return (
       <div className="min-h-screen bg-[#07090c] text-slate-100 flex flex-col items-center justify-center p-4 relative overflow-hidden">
         {/* Background grid effect */}
@@ -1122,7 +1197,7 @@ export default function App() {
   }
 
   // If no user is logged in, show the Clean Auth Modal Window immediately
-  if (!activeSessionId || !currentUser) {
+  if (!effectiveActiveId || !currentUser) {
     return (
       <AuthGateScreen
         onPlaySound={playUiSound}
@@ -1310,6 +1385,7 @@ export default function App() {
         onUpdateUserDetails={handleSaveProfile}
         isRefreshing={isRefreshing}
         onPlaySound={playUiSound}
+        onSaveAllWorkspaceSettings={handleSaveAllWorkspaceSettings}
       />
 
       {/* 5. User Cabinet & Profile Management Modal (Avatar, Profession, Bio, Password/Login, Switch/Create User) */}

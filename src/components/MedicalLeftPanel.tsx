@@ -1112,7 +1112,7 @@ export const MedicalLeftPanel: React.FC<MedicalLeftPanelProps> = ({
         )}
 
         <div className="grid grid-cols-3 gap-1.5 text-center text-slate-300 font-mono text-[11px]">
-          {(bookmarks && bookmarks.length >= 3 ? bookmarks : INITIAL_BOOKMARKS).slice(0, 3).map((bm, bIdx) => {
+          {(bookmarks ?? []).filter(bm => bm && (bm.title || bm.url)).slice(0, 3).map((bm, bIdx) => {
             const isFile = bm.type === 'file';
             const isFolder = bm.type === 'folder';
             return (
@@ -1154,7 +1154,7 @@ export const MedicalLeftPanel: React.FC<MedicalLeftPanelProps> = ({
         <BottomBookmarksSettingsModal
           isOpen={isBookmarksSettingsOpen}
           onClose={() => setIsBookmarksSettingsOpen(false)}
-          bookmarks={bookmarks && bookmarks.length >= 3 ? bookmarks : INITIAL_BOOKMARKS}
+          bookmarks={bookmarks ?? []}
           onSaveBookmarks={(updated) => {
             onUpdateBookmarks?.(updated);
           }}

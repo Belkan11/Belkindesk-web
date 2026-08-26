@@ -72,6 +72,7 @@ interface ControlCenterModalProps {
   onPlaySound?: (type: 'click' | 'success' | 'star') => void;
   currentUser?: UserProfile;
   onUpdateUserDetails?: (profile: UserProfile) => void;
+  onSaveAllWorkspaceSettings?: (updates: Partial<UserProfile>) => void;
 }
 
 export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
@@ -99,6 +100,7 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
   onPlaySound,
   currentUser,
   onUpdateUserDetails,
+  onSaveAllWorkspaceSettings,
 }) => {
   const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [localScale, setLocalScale] = useState<number>(() => {
@@ -232,33 +234,76 @@ export const ControlCenterModal: React.FC<ControlCenterModalProps> = ({
         feedsToSave = handleApplyFeed();
       }
       
-      onUpdateFeeds(feedsToSave.length > 0 ? feedsToSave : []);
-      onUpdateTimers(localTimers);
-      if (accessibility && onUpdateAccessibility) {
-        onUpdateAccessibility({
-          ...accessibility,
-          scalePercent: localScale,
-          visualAcuity: localAcuity
-        });
-      }
-      
-      onChangeCustomAiPrompt?.(localPrompt);
-      onChangeAppStyle?.(localStyle);
-      onChangeCustomWallpaper?.(localWallpaper);
-      onChangeScheduledHours?.(localHours);
-      
+      // 1. Save local weather and AI settings to localStorage for immediate browser activation
       localStorage.setItem('belkin_weather_city', localCity);
       localStorage.setItem('belkin_weather_tz', localTimeZone);
 
-      // AI Settings
-      saveAISettings(localProvider, localKey, localModel, localUrl, currentUser || null, onUpdateUserDetails);
+      localStorage.setItem('belkin_user_ai_provider', localProvider);
+      if (localKey.trim()) {
+        localStorage.setItem('belkin_user_ai_key', localKey.trim());
+      } else {
+        localStorage.removeItem('belkin_user_ai_key');
+      }
+      localStorage.setItem('belkin_user_ai_model', localModel.trim());
+      localStorage.setItem('belkin_user_ai_url', localUrl.trim());
+
+      // 2. Prepare the consolidated updates object
+      const updates: Partial<UserProfile> = {
+        feeds: feedsToSave,
+        timers: localTimers,
+        accessibility: accessibility ? {
+          ...accessibility,
+          scalePercent: localScale,
+          visualAcuity: localAcuity
+        } : {
+          scalePercent: localScale,
+          visualAcuity: localAcuity
+        },
+        customAiPrompt: localPrompt,
+        appStyle: localStyle,
+        customWallpaper: localWallpaper,
+        scheduledHours: localHours,
+        aiProvider: localProvider as any,
+        aiApiKey: localKey.trim(),
+        aiModel: localModel.trim(),
+        aiUrl: localUrl.trim()
+      };
+
+      // 3. Save everything with a single atomic callback to avoid race conditions!
+      if (onSaveAllWorkspaceSettings) {
+        onSaveAllWorkspaceSettings(updates);
+      } else {
+        // Fallback to legacy individual triggers if callback is not supplied
+        onUpdateFeeds(feedsToSave);
+        onUpdateTimers(localTimers);
+        if (accessibility && onUpdateAccessibility) {
+          onUpdateAccessibility({
+            ...accessibility,
+            scalePercent: localScale,
+            visualAcuity: localAcuity
+          });
+        }
+        onChangeCustomAiPrompt?.(localPrompt);
+        onChangeAppStyle?.(localStyle);
+        onChangeCustomWallpaper?.(localWallpaper);
+        onChangeScheduledHours?.(localHours);
+        if (currentUser && onUpdateUserDetails) {
+          onUpdateUserDetails({
+            ...currentUser,
+            aiProvider: localProvider as any,
+            aiApiKey: localKey.trim(),
+            aiModel: localModel.trim(),
+            aiUrl: localUrl.trim()
+          });
+        }
+      }
       
       setSavedSuccess(true);
       onPlaySound?.('ping');
       setTimeout(() => setSavedSuccess(false), 2000);
       
       // Trigger a refresh if they changed feeds
-      onTriggerRefresh?.(feedsToSave.length > 0 ? feedsToSave : []);
+      onTriggerRefresh?.(feedsToSave);
       
     } catch (err) {
       console.error(err);
